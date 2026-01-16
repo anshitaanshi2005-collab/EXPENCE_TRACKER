@@ -9,26 +9,9 @@
             </div>
             <div class="card-body">
                 <form method="POST">
-                    <div class="mb-3">
-                        <label for="amount" class="form-label">Amount</label>
-                        <input type="number" step="0.01" class="form-control" id="amount" name="amount" value="{{ expense['amount'] }}" required>
-                    </div>
-                    <div class="mb-3">
-                        <label for="category" class="form-label">Category</label>
-                        <select class="form-select" id="category" name="category" required>
-                            <option value="Food" {% if expense['category'] == 'Food' %}selected{% endif %}>Food</option>
-                            <option value="Transportation" {% if expense['category'] == 'Transportation' %}selected{% endif %}>Transportation</option>
-                            <option value="Entertainment" {% if expense['category'] == 'Entertainment' %}selected{% endif %}>Entertainment</option>
-                            <option value="Shopping" {% if expense['category'] == 'Shopping' %}selected{% endif %}>Shopping</option>
-                            <option value="Bills" {% if expense['category'] == 'Bills' %}selected{% endif %}>Bills</option>
-                            <option value="Healthcare" {% if expense['category'] == 'Healthcare' %}selected{% endif %}>Healthcare</option>
-                            <option value="Other" {% if expense['category'] == 'Other' %}selected{% endif %}>Other</option>
-                        </select>
-                    </div>
-                    <div class="mb-3">
-                        <label for="description" class="form-label">Description</label>
-                        <textarea class="form-control" id="description" name="description" rows="3">{{ expense['description'] or '' }}</textarea>
-                    </div>
+                    {% include "partials/common_input.html" %}
+                    {% include "partials/input2.html" %}
+                 
                     <div class="mb-3">
                         <label for="date" class="form-label">Date</label>
                         <input type="date" class="form-control" id="date" name="date" value="{{ expense['date'] }}">

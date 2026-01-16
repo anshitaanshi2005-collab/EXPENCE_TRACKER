@@ -21,3 +21,49 @@ body {
     height: 300px;
     width: 100%;
 }
+
+select.tomselected {
+    display: none !important;
+}
+
+.ts-dropdown {
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+
+
+select.tomselected {
+    display: none !important;
+}
+
+
+.ts-control {
+    display: flex !important;
+    align-items: center !important;
+    min-height: 38px !important;
+    padding: 6px 10px !important;
+    border: 1px solid #ced4da !important;
+    border-radius: 4px !important;
+    background-color: #fff !important;
+    box-sizing: border-box;
+}
+
+
+.ts-wrapper.single .ts-control input {
+    width: 0;
+    min-width: 0;
+    padding: 0;
+    margin: 0;
+    border: none;
+    box-shadow: none;
+    background: transparent;
+    outline: none;
+}
+
+
+.ts-wrapper.single .ts-control input:focus {
+    width: auto;
+    flex: 1;
+    margin-left: 4px;
+}
