@@ -3,20 +3,37 @@
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-md-6">
-        <div class="card">
-            <div class="card-header">
-                <h4 class="mb-0">Add Expense</h4>
+        <div class="card shadow-sm">
+            <div class="card-header text-center">
+                <h4 class="mb-0">Add a New Expense</h4>
             </div>
             <div class="card-body">
-                <form method="POST">
+                <form method="POST" novalidate>
                     <div class="mb-3">
                         <label for="amount" class="form-label">Amount</label>
-                        <input type="number" step="0.01" class="form-control" id="amount" name="amount" required>
+                        <input
+                            type="number"
+                            class="form-control"
+                            id="amount"
+                            name="amount"
+                            placeholder="Enter amount spent"
+                            min="0.01"
+                            step="0.01"
+                            required
+                            aria-required="true"
+                        >
                     </div>
+
                     <div class="mb-3">
                         <label for="category" class="form-label">Category</label>
-                        <select class="form-select" id="category" name="category" required>
-                            <option value="">Select Category</option>
+                        <select
+                            class="form-select"
+                            id="category"
+                            name="category"
+                            required
+                            aria-required="true"
+                        >
+                            <option value="" disabled selected>Select a category</option>
                             <option value="Food">Food</option>
                             <option value="Transportation">Transportation</option>
                             <option value="Entertainment">Entertainment</option>
@@ -26,15 +43,31 @@
                             <option value="Other">Other</option>
                         </select>
                     </div>
+
                     <div class="mb-3">
                         <label for="description" class="form-label">Description</label>
-                        <textarea class="form-control" id="description" name="description" rows="3"></textarea>
+                        <textarea
+                            class="form-control"
+                            id="description"
+                            name="description"
+                            rows="3"
+                            placeholder="Optional notes about this expense"
+                        ></textarea>
                     </div>
-                    <div class="mb-3">
+
+                    <div class="mb-4">
                         <label for="date" class="form-label">Date</label>
-                        <input type="date" class="form-control" id="date" name="date">
+                        <input
+                            type="date"
+                            class="form-control"
+                            id="date"
+                            name="date"
+                        >
                     </div>
-                    <button type="submit" class="btn btn-primary w-100">Add Expense</button>
+
+                    <button type="submit" class="btn btn-primary w-100" aria-label="Add expense">
+                        Add Expense
+                    </button>
                 </form>
             </div>
         </div>

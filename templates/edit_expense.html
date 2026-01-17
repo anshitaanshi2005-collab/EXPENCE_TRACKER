@@ -3,19 +3,36 @@
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-md-6">
-        <div class="card">
-            <div class="card-header">
+        <div class="card shadow-sm">
+            <div class="card-header text-center">
                 <h4 class="mb-0">Edit Expense</h4>
             </div>
             <div class="card-body">
-                <form method="POST">
+                <form method="POST" novalidate>
                     <div class="mb-3">
                         <label for="amount" class="form-label">Amount</label>
-                        <input type="number" step="0.01" class="form-control" id="amount" name="amount" value="{{ expense['amount'] }}" required>
+                        <input
+                            type="number"
+                            class="form-control"
+                            id="amount"
+                            name="amount"
+                            value="{{ expense['amount'] }}"
+                            min="0.01"
+                            step="0.01"
+                            required
+                            aria-required="true"
+                        >
                     </div>
+
                     <div class="mb-3">
                         <label for="category" class="form-label">Category</label>
-                        <select class="form-select" id="category" name="category" required>
+                        <select
+                            class="form-select"
+                            id="category"
+                            name="category"
+                            required
+                            aria-required="true"
+                        >
                             <option value="Food" {% if expense['category'] == 'Food' %}selected{% endif %}>Food</option>
                             <option value="Transportation" {% if expense['category'] == 'Transportation' %}selected{% endif %}>Transportation</option>
                             <option value="Entertainment" {% if expense['category'] == 'Entertainment' %}selected{% endif %}>Entertainment</option>
@@ -25,15 +42,32 @@
                             <option value="Other" {% if expense['category'] == 'Other' %}selected{% endif %}>Other</option>
                         </select>
                     </div>
+
                     <div class="mb-3">
                         <label for="description" class="form-label">Description</label>
-                        <textarea class="form-control" id="description" name="description" rows="3">{{ expense['description'] or '' }}</textarea>
+                        <textarea
+                            class="form-control"
+                            id="description"
+                            name="description"
+                            rows="3"
+                            placeholder="Optional notes about this expense"
+                        >{{ expense['description'] or '' }}</textarea>
                     </div>
-                    <div class="mb-3">
+
+                    <div class="mb-4">
                         <label for="date" class="form-label">Date</label>
-                        <input type="date" class="form-control" id="date" name="date" value="{{ expense['date'] }}">
+                        <input
+                            type="date"
+                            class="form-control"
+                            id="date"
+                            name="date"
+                            value="{{ expense['date'] }}"
+                        >
                     </div>
-                    <button type="submit" class="btn btn-primary w-100">Update Expense</button>
+
+                    <button type="submit" class="btn btn-primary w-100" aria-label="Update expense">
+                        Update Expense
+                    </button>
                 </form>
             </div>
         </div>
