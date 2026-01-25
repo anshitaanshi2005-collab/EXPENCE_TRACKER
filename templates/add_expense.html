@@ -8,7 +8,7 @@
                 <h4 class="mb-0">Add a New Expense</h4>
             </div>
             <div class="card-body">
-                <form method="POST" novalidate>
+                <form method="POST" action="{{ url_for('add_expense') }}" novalidate>
                     <div class="mb-3">
                         <label for="amount" class="form-label">Amount</label>
                         <input
@@ -53,6 +53,21 @@
                             rows="3"
                             placeholder="Optional notes about this expense"
                         ></textarea>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="currency" class="form-label">Currency</label>
+                        <select
+                            class="form-select"
+                            id="currency"
+                            name="currency"
+                            required
+                        >
+                            <option value="INR" selected>INR</option>
+                            <option value="USD">USD</option>
+                            <option value="EUR">EUR</option>
+                            <option value="GBP">GBP</option>
+                        </select>
                     </div>
 
                     <div class="mb-4">

@@ -8,7 +8,7 @@
                 <h4 class="mb-0">Edit Expense</h4>
             </div>
             <div class="card-body">
-                <form method="POST" novalidate>
+                <form method="POST" action="{{ url_for('edit_expense', expense_id=expense['id']) }}" novalidate>
                     <div class="mb-3">
                         <label for="amount" class="form-label">Amount</label>
                         <input
@@ -53,6 +53,17 @@
                             placeholder="Optional notes about this expense"
                         >{{ expense['description'] or '' }}</textarea>
                     </div>
+
+                    <div class="mb-3">
+                        <label for="currency" class="form-label">Currency</label>
+                        <select class="form-select" id="currency" name="currency" required>
+                            <option value="INR" {% if expense['currency'] == 'INR' %}selected{% endif %}>INR</option>
+                            <option value="USD" {% if expense['currency'] == 'USD' %}selected{% endif %}>USD</option>
+                            <option value="EUR" {% if expense['currency'] == 'EUR' %}selected{% endif %}>EUR</option>
+                            <option value="GBP" {% if expense['currency'] == 'GBP' %}selected{% endif %}>GBP</option>
+                        </select>
+                    </div>
+
 
                     <div class="mb-4">
                         <label for="date" class="form-label">Date</label>
