@@ -22,6 +22,7 @@ def get_db_connection():
     conn = sqlite3.connect('expenses.db')
     conn.row_factory = sqlite3.Row
     return conn
+
 def _fetch_usd_rates():
     url = "https://api.exchangerate-api.com/v4/latest/USD"
     response = requests.get(url, timeout=5)
@@ -31,7 +32,6 @@ def _fetch_usd_rates():
         raise ValueError(f"Invalid API response: {data}")
 
     return data["rates"]
-
 
 def get_usd_rate(currency):
     if currency == "USD":
@@ -54,7 +54,7 @@ def get_usd_rate(currency):
     rates = _RATES_CACHE["rates"]
 
     if currency not in rates:
-        print(f"Unsupported currency: {currency}")
+        # print(f"Unsupported currency: {currency}") # Suppressed to keep logs clean
         return 1.0
 
     return float(rates[currency])
@@ -68,14 +68,94 @@ def convert_from_usd(amount_usd, currency):
     rate = get_usd_rate(currency)
     return round(amount_usd * rate, 2)
 
-
-def init_db():
-
-    
-
+# --- NEW HELPER: SPLITWISE DEBT ALGORITHM ---
+def calculate_group_debts(group_id):
+    """Calculates who owes whom, handling settlements/partial payments."""
     conn = get_db_connection()
     
+    # 1. Get Members
+    members = conn.execute(
+        "SELECT user_id, username FROM group_members JOIN users ON users.id = group_members.user_id WHERE group_id = ?", 
+        (group_id,)
+    ).fetchall()
+    
+    user_map = {row['user_id']: row['username'] for row in members}
+    balances = {row['user_id']: 0.0 for row in members}
 
+    # 2. Calculate Balances
+    expenses = conn.execute("SELECT * FROM group_expenses WHERE group_id = ?", (group_id,)).fetchall()
+    
+    for exp in expenses:
+        # HANDLE SETTLEMENTS (The "Done Box" payments)
+        if exp['description'] == 'Settlement':
+            # In a settlement, the Payer (Debtor) is paying the Split User (Creditor)
+            # We need to find who this payment was sent TO
+            splits = conn.execute("SELECT user_id FROM expense_splits WHERE expense_id = ?", (exp['id'],)).fetchall()
+            if splits:
+                receiver_id = splits[0]['user_id']
+                # Payer (Debtor) gave money, so their balance increases (becomes less negative)
+                if exp['payer_id'] in balances:
+                    balances[exp['payer_id']] += exp['amount']
+                # Receiver (Creditor) got money, so their balance decreases (becomes less positive/owed)
+                if receiver_id in balances:
+                    balances[receiver_id] -= exp['amount']
+        
+        # HANDLE NORMAL EXPENSES
+        else:
+            # Payer gets credit (+)
+            if exp['payer_id'] in balances:
+                balances[exp['payer_id']] += exp['amount']
+            
+            # Splitters get debit (-)
+            splits = conn.execute("SELECT user_id, amount_owed FROM expense_splits WHERE expense_id = ?", (exp['id'],)).fetchall()
+            for split in splits:
+                if split['user_id'] in balances:
+                    balances[split['user_id']] -= split['amount_owed']
+
+    conn.close()
+
+    # 3. Minimize Transactions
+    debtors = []
+    creditors = []
+    
+    for uid, amount in balances.items():
+        if amount < -0.01: debtors.append({'id': uid, 'amount': amount})
+        if amount > 0.01: creditors.append({'id': uid, 'amount': amount})
+
+    debtors.sort(key=lambda x: x['amount'])
+    creditors.sort(key=lambda x: x['amount'], reverse=True)
+
+    transactions = []
+    d_idx = 0
+    c_idx = 0
+
+    while d_idx < len(debtors) and c_idx < len(creditors):
+        debtor = debtors[d_idx]
+        creditor = creditors[c_idx]
+
+        amount = min(abs(debtor['amount']), creditor['amount'])
+        
+        transactions.append({
+            'from_id': debtor['id'],
+            'to_id': creditor['id'],
+            'from': user_map.get(debtor['id'], 'Unknown'),
+            'to': user_map.get(creditor['id'], 'Unknown'),
+            'amount': round(amount, 2)
+        })
+
+        debtor['amount'] += amount
+        creditor['amount'] -= amount
+
+        if abs(debtor['amount']) < 0.01: d_idx += 1
+        if creditor['amount'] < 0.01: c_idx += 1
+
+    return transactions
+
+
+def init_db():
+    conn = get_db_connection()
+
+    # --- ORIGINAL TABLES ---
     conn.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -119,6 +199,49 @@ def init_db():
     conn.execute(
     'CREATE INDEX IF NOT EXISTS idx_budgets_user ON budgets(user_id)'
     )
+
+    # --- NEW SPLITWISE TABLES ---
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            created_by INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (created_by) REFERENCES users (id)
+        )
+    ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS group_members (
+            group_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            joined_at TEXT NOT NULL,
+            FOREIGN KEY (group_id) REFERENCES groups (id),
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            PRIMARY KEY (group_id, user_id)
+        )
+    ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS group_expenses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL,
+            payer_id INTEGER NOT NULL,
+            amount REAL NOT NULL,
+            description TEXT NOT NULL,
+            date TEXT NOT NULL,
+            FOREIGN KEY (group_id) REFERENCES groups (id),
+            FOREIGN KEY (payer_id) REFERENCES users (id)
+        )
+    ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS expense_splits (
+            expense_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            amount_owed REAL NOT NULL,
+            FOREIGN KEY (expense_id) REFERENCES group_expenses (id),
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    ''')
+
     conn.commit()
     conn.close()
 
@@ -129,6 +252,7 @@ def set_currency():
     if currency:
         session['currency'] = currency
     return redirect(url_for('dashboard'))
+
 @app.route('/')
 def index():
     if 'user_id' in session:
@@ -656,10 +780,163 @@ def delete_budget(budget_id):
     flash('Budget deleted successfully!')
     return redirect(url_for('budgets'))
 
+# ================= NEW: SPLITWISE FEATURES =================
 
-# chatbot
+@app.route('/groups')
+def groups():
+    if 'user_id' not in session: return redirect(url_for('login'))
+    conn = get_db_connection()
+    user_groups = conn.execute('''
+        SELECT g.id, g.name, COUNT(m.user_id) as member_count 
+        FROM groups g
+        JOIN group_members m ON g.id = m.group_id
+        WHERE m.user_id = ?
+        GROUP BY g.id
+    ''', (session['user_id'],)).fetchall()
+    conn.close()
+    return render_template('groups.html', groups=user_groups)
 
+@app.route('/create_group', methods=['POST'])
+def create_group():
+    if 'user_id' not in session: return redirect(url_for('login'))
+    group_name = request.form['name']
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('INSERT INTO groups (name, created_by, created_at) VALUES (?, ?, ?)',
+                   (group_name, session['user_id'], datetime.now()))
+    group_id = cursor.lastrowid
+    
+    # Add creator as first member
+    cursor.execute('INSERT INTO group_members (group_id, user_id, joined_at) VALUES (?, ?, ?)',
+                   (group_id, session['user_id'], datetime.now()))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('group_detail', group_id=group_id))
 
+@app.route('/group/<int:group_id>')
+def group_detail(group_id):
+    if 'user_id' not in session: return redirect(url_for('login'))
+    conn = get_db_connection()
+    
+    # Access Control
+    is_member = conn.execute('SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?', 
+                             (group_id, session['user_id'])).fetchone()
+    if not is_member:
+        conn.close()
+        flash("You are not a member of this group.")
+        return redirect(url_for('groups'))
+
+    group = conn.execute('SELECT * FROM groups WHERE id = ?', (group_id,)).fetchone()
+    
+    # Get Expenses
+    expenses = conn.execute('''
+        SELECT ge.*, u.username as payer_name 
+        FROM group_expenses ge 
+        JOIN users u ON ge.payer_id = u.id 
+        WHERE group_id = ? ORDER BY date DESC
+    ''', (group_id,)).fetchall()
+    
+    # Get Members (For 'Paid By' list)
+    members = conn.execute('''
+        SELECT u.id, u.username, u.email 
+        FROM group_members gm 
+        JOIN users u ON gm.user_id = u.id 
+        WHERE group_id = ?
+    ''', (group_id,)).fetchall()
+    
+    conn.close()
+    
+    debts = calculate_group_debts(group_id)
+    return render_template('group_detail.html', group=group, expenses=expenses, members=members, debts=debts)
+
+@app.route('/group/<int:group_id>/add_member', methods=['POST'])
+def add_member(group_id):
+    if 'user_id' not in session: return redirect(url_for('login'))
+    username = request.form['username']
+    conn = get_db_connection()
+    
+    # NEW LOGIC: Check by username. If not exists, CREATE IT.
+    user = conn.execute('SELECT id FROM users WHERE username = ?', (username,)).fetchone()
+    
+    if not user:
+        # Create "Ghost" user automatically so we can add them to the bill
+        # Using a timestamp to ensure unique email
+        dummy_email = f"{username}_{int(time.time())}@placeholder.com"
+        dummy_pass = generate_password_hash("placeholder") # They can't login, which is fine
+        c = conn.cursor()
+        c.execute('INSERT INTO users (username, email, password) VALUES (?, ?, ?)', (username, dummy_email, dummy_pass))
+        user_id = c.lastrowid
+        conn.commit()
+        flash(f'Created new user "{username}" and added to group!')
+    else:
+        user_id = user['id']
+        flash(f'Added "{username}" to group!')
+
+    # Add to group
+    try:
+        conn.execute('INSERT INTO group_members (group_id, user_id, joined_at) VALUES (?, ?, ?)',
+                     (group_id, user_id, datetime.now()))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        flash('User already in group.')
+    
+    conn.close()
+    return redirect(url_for('group_detail', group_id=group_id))
+
+@app.route('/group/<int:group_id>/add_expense', methods=['POST'])
+def add_group_expense(group_id):
+    if 'user_id' not in session: return redirect(url_for('login'))
+    
+    amount = float(request.form['amount'])
+    desc = request.form['description']
+    payer_id = int(request.form['payer_id']) # Now we use the ID from the dropdown
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Insert Expense
+    cursor.execute('INSERT INTO group_expenses (group_id, payer_id, amount, description, date) VALUES (?, ?, ?, ?, ?)', 
+                   (group_id, payer_id, amount, desc, datetime.now()))
+    expense_id = cursor.lastrowid
+    
+    # Split equally among ALL members
+    members = conn.execute('SELECT user_id FROM group_members WHERE group_id = ?', (group_id,)).fetchall()
+    if members:
+        split = amount / len(members)
+        for m in members:
+            conn.execute('INSERT INTO expense_splits (expense_id, user_id, amount_owed) VALUES (?, ?, ?)',
+                         (expense_id, m['user_id'], split))
+        conn.commit()
+    conn.close()
+    return redirect(url_for('group_detail', group_id=group_id))
+
+@app.route('/group/<int:group_id>/settle_up', methods=['POST'])
+def settle_up(group_id):
+    if 'user_id' not in session: return redirect(url_for('login'))
+    
+    payer_id = int(request.form['from_id']) # Debtor
+    receiver_id = int(request.form['to_id']) # Creditor
+    amount = float(request.form['amount']) # Partial or Full amount
+    
+    conn = get_db_connection()
+    c = conn.cursor()
+    
+    # Record Settlement as an Expense (Payer = Debtor)
+    c.execute('INSERT INTO group_expenses (group_id, payer_id, amount, description, date) VALUES (?, ?, ?, ?, ?)',
+              (group_id, payer_id, amount, "Settlement", datetime.now()))
+    exp_id = c.lastrowid
+    
+    # Assign the split fully to the Receiver (Creditor)
+    # Math: Debtor Paid (+balance), Creditor Received (-balance)
+    c.execute('INSERT INTO expense_splits (expense_id, user_id, amount_owed) VALUES (?, ?, ?)',
+              (exp_id, receiver_id, amount))
+    
+    conn.commit()
+    conn.close()
+    flash('Payment recorded!')
+    return redirect(url_for('group_detail', group_id=group_id))
+
+# ================= CHATBOT =================
 
 groq_client = Groq(
     api_key="YOUR GROQ API"
