@@ -266,9 +266,23 @@ def index():
 @app.route('/signup', methods=['GET', 'POST'])
 def signup():
     if request.method == 'POST':
-        username = request.form['username']
-        email = request.form['email']
-        password = request.form['password']
+        username = request.form.get('username', '').strip()
+        email = request.form.get('email', '').strip()
+        password = request.form.get('password', '')
+        confirm_password = request.form.get('confirm_password', '')
+        
+        # Validation
+        if not username or not email or not password:
+            flash('Please fill in all fields!')
+            return render_template('signup.html')
+        
+        if password != confirm_password:
+            flash('Passwords do not match!')
+            return render_template('signup.html')
+        
+        if len(password) < 4:
+            flash('Password must be at least 4 characters!')
+            return render_template('signup.html')
         
         conn = get_db_connection()
         try:
@@ -280,29 +294,45 @@ def signup():
             conn.commit()
             flash('Account created successfully! Please login.')
             return redirect(url_for('login'))
-        except sqlite3.IntegrityError:
-            flash('Username or email already exists!')
+        except sqlite3.IntegrityError as e:
+            if 'username' in str(e):
+                flash('Username already exists!')
+            elif 'email' in str(e):
+                flash('Email already exists!')
+            else:
+                flash('Signup failed. Please try again.')
+        except Exception as e:
+            flash(f'Error: {str(e)}')
         finally:
             conn.close()
+    
     return render_template('signup.html')
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
         
-        conn = get_db_connection()
-        user = conn.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
-        conn.close()
+        if not username or not password:
+            flash('Please enter both username and password!')
+            return render_template('login.html')
         
-        if user and check_password_hash(user['password'], password):
-            session['user_id'] = user['id']
-            session['username'] = user['username']
-            flash('Logged in successfully!')
-            return redirect(url_for('dashboard'))
-        else:
-            flash('Invalid credentials!')
+        try:
+            conn = get_db_connection()
+            user = conn.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
+            conn.close()
+            
+            if user and check_password_hash(user['password'], password):
+                session['user_id'] = user['id']
+                session['username'] = user['username']
+                flash('Logged in successfully!')
+                return redirect(url_for('dashboard'))
+            else:
+                flash('Invalid username or password!')
+        except Exception as e:
+            flash(f'Login error: {str(e)}')
+    
     return render_template('login.html')
 
 @app.route('/logout')
