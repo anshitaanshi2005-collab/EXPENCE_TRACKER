@@ -573,6 +573,9 @@ def search_expenses():
     if 'user_id' not in session:
         return redirect(url_for('login'))
     
+    # [FIX] Define user_categories here so it is available for the return statement
+    user_categories = get_user_categories(session['user_id'])
+    
     # Get filter parameters
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
@@ -603,7 +606,7 @@ def search_expenses():
             query += f' AND category IN ({placeholders})'
             params.extend(selected_categories)
     
-    # Amount range filter (using amount_usd for consistent comparison)
+    # Amount range filter
     if amount_min:
         try:
             min_usd = convert_to_usd(float(amount_min), session.get('currency', 'USD'))
@@ -619,12 +622,12 @@ def search_expenses():
         except ValueError:
             pass
     
-    # Keyword search in description
+    # Keyword search
     if keyword:
         query += ' AND description LIKE ?'
         params.append(f'%{keyword}%')
     
-    # Sorting (validate sort_by to prevent SQL injection)
+    # Sorting
     valid_sort_columns = {'date': 'date', 'amount': 'amount_usd', 'category': 'category'}
     sort_column = valid_sort_columns.get(sort_by, 'date')
     sort_direction = 'ASC' if sort_order.lower() == 'asc' else 'DESC'
@@ -633,9 +636,6 @@ def search_expenses():
     conn = get_db_connection()
     expenses_list = conn.execute(query, params).fetchall()
     conn.close()
-    
-    # Categories for the filter dropdown
-    categories = ['Food', 'Transportation', 'Entertainment', 'Shopping', 'Bills', 'Healthcare', 'Other']
     
     # Pass filter values back for form persistence
     filters = {
@@ -649,6 +649,7 @@ def search_expenses():
         'sort_order': sort_order
     }
     
+    # [FIX] user_categories is now correctly defined above
     return render_template('expenses.html', expenses=expenses_list, categories=user_categories, filters=filters, is_filtered=True)
 
 @app.route('/add_expense', methods=['GET', 'POST'])
