@@ -15,6 +15,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 from groq import Groq
+from xhtml2pdf import pisa
 
 # --- CONFIGURATION ---
 app = Flask(__name__)
@@ -1206,31 +1207,46 @@ def export_data(data_type, format):
         )
     
     elif format == 'pdf':
+        # xhtml2pdf implementation
         output = io.BytesIO()
-        doc = SimpleDocTemplate(output, pagesize=letter)
-        elements = []
-        styles = getSampleStyleSheet()
         
-        # Title
-        elements.append(Paragraph(f"{data_type.capitalize()} Report", styles['Title']))
-        elements.append(Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
-        elements.append(Paragraph("<br/><br/>", styles['Normal']))
+        # Simple HTML Template for PDF
+        html_content = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Helvetica, sans-serif; }}
+                table {{ width: 100%; border-collapse: collapse; }}
+                th, td {{ padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }}
+                th {{ background-color: #f2f2f2; }}
+                h2 {{ color: #333; }}
+            </style>
+        </head>
+        <body>
+            <h2>{data_type.capitalize()} Report</h2>
+            <p>Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+            <table>
+                <thead>
+                    <tr>
+                        {''.join([f'<th>{col}</th>' for col in df.columns])}
+                    </tr>
+                </thead>
+                <tbody>
+                    {''.join(['<tr>' + ''.join([f'<td>{val}</td>' for val in row]) + '</tr>' for row in df.values])}
+                </tbody>
+            </table>
+        </body>
+        </html>
+        """
         
-        # Table
-        data = [df.columns.tolist()] + df.values.tolist()
-        t = Table(data)
-        t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 12),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black)
-        ]))
-        elements.append(t)
-        doc.build(elements)
+        pisa_status = pisa.CreatePDF(
+            src=html_content,
+            dest=output
+        )
+        
+        if pisa_status.err:
+            return f"PDF generation error: {pisa_status.err}", 500
+            
         output.seek(0)
         return send_file(
             output,
