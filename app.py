@@ -13,6 +13,7 @@ import pyotp
 import qrcode
 import io
 import base64
+from cryptography.fernet import Fernet
 from functools import wraps
 from flasgger import Swagger, swag_from
 from flask_limiter import Limiter
@@ -27,6 +28,33 @@ from xhtml2pdf import pisa
 # --- CONFIGURATION ---
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'  # Change to random key
+
+# --- ENCRYPTION CONFIGURATION ---
+# Generates a key file if it doesn't exist. 
+# IN PRODUCTION: Keep 'secret.key' safe and separate from the code!
+KEY_FILE = 'secret.key'
+
+def load_key():
+    if not os.path.exists(KEY_FILE):
+        key = Fernet.generate_key()
+        with open(KEY_FILE, 'wb') as key_file:
+            key_file.write(key)
+    return open(KEY_FILE, 'rb').read()
+
+cipher_suite = Fernet(load_key())
+
+def encrypt_data(data):
+    """Encrypts a string."""
+    if not data: return ""
+    return cipher_suite.encrypt(data.encode()).decode()
+
+def decrypt_data(data):
+    """Decrypts a string. Returns original data if decryption fails (Backward Compatibility)."""
+    if not data: return ""
+    try:
+        return cipher_suite.decrypt(data.encode()).decode()
+    except Exception:
+        return data  # Return raw text if it wasn't encrypted (Legacy Data)
 
 # Swagger Configuration
 app.config['SWAGGER'] = {
@@ -1168,11 +1196,19 @@ def expenses():
         return redirect(url_for('login'))
     
     conn = get_db_connection()
-    expenses_list = conn.execute(
+    # 1. Fetch into 'raw_expenses'
+    raw_expenses = conn.execute(
         'SELECT * FROM expenses WHERE user_id = ? ORDER BY date DESC', 
         (session['user_id'],)
     ).fetchall()
     conn.close()
+
+    # 2. Decrypt into 'expenses_list'
+    expenses_list = []
+    for row in raw_expenses:
+        r = dict(row)
+        r['description'] = decrypt_data(r['description'])
+        expenses_list.append(r)
     
     user_categories = get_user_categories(session['user_id'])
     return render_template('expenses.html', expenses=expenses_list, categories=user_categories)
@@ -1182,8 +1218,9 @@ def search_expenses():
     if 'user_id' not in session:
         return redirect(url_for('login'))
     
-    # Get user categories (FIXED: Defined before use)
     user_categories = get_user_categories(session['user_id'])
+
+    keyword = request.args.get('keyword', '').lower()
     
     # Get filter parameters
     date_from = request.args.get('date_from', '')
@@ -1191,7 +1228,6 @@ def search_expenses():
     categories_param = request.args.get('categories', '')
     amount_min = request.args.get('amount_min', '')
     amount_max = request.args.get('amount_max', '')
-    keyword = request.args.get('keyword', '')
     sort_by = request.args.get('sort_by', 'date')
     sort_order = request.args.get('sort_order', 'desc')
     
@@ -1199,7 +1235,6 @@ def search_expenses():
     query = 'SELECT * FROM expenses WHERE user_id = ?'
     params = [session['user_id']]
     
-    # Date range filter
     if date_from:
         query += ' AND date >= ?'
         params.append(date_from)
@@ -1207,7 +1242,6 @@ def search_expenses():
         query += ' AND date <= ?'
         params.append(date_to)
     
-    # Category filter (multiple categories supported)
     if categories_param:
         selected_categories = [c.strip() for c in categories_param.split(',') if c.strip()]
         if selected_categories:
@@ -1215,7 +1249,6 @@ def search_expenses():
             query += f' AND category IN ({placeholders})'
             params.extend(selected_categories)
     
-    # Amount range filter (using amount_usd for consistent comparison)
     if amount_min:
         try:
             min_usd = convert_to_usd(float(amount_min), session.get('currency', 'USD'))
@@ -1223,6 +1256,7 @@ def search_expenses():
             params.append(min_usd)
         except ValueError:
             pass
+            
     if amount_max:
         try:
             max_usd = convert_to_usd(float(amount_max), session.get('currency', 'USD'))
@@ -1231,25 +1265,30 @@ def search_expenses():
         except ValueError:
             pass
     
-    # Keyword search in description
-    if keyword:
-        # [FIX] Ensure keyword is a string
-        if not isinstance(keyword, str):
-            keyword = str(keyword)
-        query += ' AND description LIKE ?'
-        params.append(f'%{keyword}%')
-    
-    # Sorting (validate sort_by to prevent SQL injection)
+    # Sorting
     valid_sort_columns = {'date': 'date', 'amount': 'amount_usd', 'category': 'category'}
     sort_column = valid_sort_columns.get(sort_by, 'date')
     sort_direction = 'ASC' if sort_order.lower() == 'asc' else 'DESC'
     query += f' ORDER BY {sort_column} {sort_direction}'
     
     conn = get_db_connection()
-    expenses_list = conn.execute(query, params).fetchall()
+    raw_expenses = conn.execute(query, params).fetchall()
     conn.close()
     
-    # Pass filter values back for form persistence
+    # Decrypt and Filter in Python
+    expenses_list = []
+    search_term = keyword.lower() if keyword else None
+    
+    for row in raw_expenses:
+        exp = dict(row)
+        exp['description'] = decrypt_data(exp['description'])
+        
+        if search_term:
+            if search_term in exp['description'].lower():
+                expenses_list.append(exp)
+        else:
+            expenses_list.append(exp)
+    
     filters = {
         'date_from': date_from,
         'date_to': date_to,
@@ -1276,6 +1315,9 @@ def add_expense():
         date = request.form['date'] or datetime.now().strftime('%Y-%m-%d')
 
         amount_usd = convert_to_usd(amount, currency)
+
+        raw_description = request.form['description']
+        description = encrypt_data(raw_description)
 
         conn = get_db_connection()
         conn.execute(
@@ -1307,6 +1349,9 @@ def edit_expense(expense_id):
         date = request.form['date'] or datetime.now().strftime('%Y-%m-%d')
         amount_usd = convert_to_usd(amount, currency)
 
+        raw_description = request.form['description']
+        description = encrypt_data(raw_description)
+
         conn.execute(
             '''UPDATE expenses SET amount=?, currency=?, amount_usd=?, category=?, description=?, date=? 
                WHERE id=? AND user_id=?''',
@@ -1325,6 +1370,9 @@ def edit_expense(expense_id):
     if not expense:
         flash('Expense not found!')
         return redirect(url_for('expenses'))
+    
+    expense_dict = dict(expense)
+    expense_dict['description'] = decrypt_data(expense['description'])
 
     user_categories = get_user_categories(session['user_id'])
     return render_template('edit_expense.html', expense=expense, categories=user_categories, selected_currency=expense['currency'])
@@ -2221,6 +2269,37 @@ def delete_group_expense(group_id, expense_id):
     
     flash('Expense deleted successfully!')
     return redirect(url_for('group_detail', group_id=group_id))
+
+@app.route('/activity_log')
+def activity_log():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    
+    conn = get_db_connection()
+    user_id = session['user_id']
+    
+    # Fetch recent expenses and budgets to show as "activity"
+    # We decrypt the descriptions so they are readable
+    activities = conn.execute('''
+        SELECT 'Expense' as type, description, amount, currency, date, category 
+        FROM expenses WHERE user_id = ?
+        UNION ALL
+        SELECT 'Budget' as type, category as description, amount, currency, start_date as date, category
+        FROM budgets WHERE user_id = ?
+        ORDER BY date DESC LIMIT 50
+    ''', (user_id, user_id)).fetchall()
+    
+    conn.close()
+    
+    # Decrypt descriptions for the view
+    activity_list = []
+    for row in activities:
+        act = dict(row)
+        if act['type'] == 'Expense':
+            act['description'] = decrypt_data(act['description'])
+        activity_list.append(act)
+    
+    return render_template('activity_log.html', activities=activity_list)
 
 if __name__ == '__main__':
     init_db()
