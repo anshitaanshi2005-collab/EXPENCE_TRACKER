@@ -14,6 +14,10 @@ def app():
         "RATELIMIT_ENABLED": False,  # Disable rate limiting for tests
     })
     
+    # Also explicitly disable the limiter if it exists
+    if hasattr(app_module, 'limiter'):
+        app_module.limiter.enabled = False
+    
     # Use a unique shared in-memory database for this test
     db_name = f"test_{uuid.uuid4().hex}"
     # Force the module-level DB_PATH to use the in-memory URI

@@ -158,7 +158,7 @@ def test_category_management(client):
     assert "Business Travel" in resp.text
     
     # Delete Category
-    client.post('/delete_category/1', follow_redirects=True)
+    client.get('/delete_category/1', follow_redirects=True)
     resp = client.get('/categories')
     assert "Business Travel" not in resp.text
 
@@ -319,6 +319,15 @@ def test_category_management_edge_cases(client):
     # 5. Delete non-existent category
     resp = client.get('/delete_category/999', follow_redirects=True)
     assert 'Category not found!' in resp.text
+
+    # 6. Edit category to existing name (Covers 1165-1166)
+    client.post('/add_category', data={"name": "Travel"}, follow_redirects=True)
+    # Get ID of Travel
+    conn = flask_app.get_db_connection()
+    cat_id = conn.execute("SELECT id FROM categories WHERE name = 'Travel'").fetchone()['id']
+    conn.close()
+    resp = client.post(f'/edit_category/{cat_id}', data={"name": "Food"}, follow_redirects=True)
+    assert 'A category with this name already exists!' in resp.text
 
 def test_budget_management_edge_cases(client):
     with client.session_transaction() as sess:
@@ -577,6 +586,24 @@ def test_auth_edge_cases(client):
         sess['user_id'] = 1
     resp = client.get('/logout', follow_redirects=True)
     assert 'Logged out successfully!' in resp.text
+
+    # 5. Missing fields in signup (Covers 953-954)
+    resp = client.post('/signup', data={
+        "username": "",
+        "email": "empty@test.com",
+        "password": "pass",
+        "confirm_password": "pass"
+    }, follow_redirects=True)
+    assert 'Please fill in all fields!' in resp.text
+
+    # 6. Password mismatch (Covers 957-958)
+    resp = client.post('/signup', data={
+        "username": "mismatch",
+        "email": "mismatch@test.com",
+        "password": "pass1",
+        "confirm_password": "pass2"
+    }, follow_redirects=True)
+    assert 'Passwords do not match!' in resp.text
 
 def test_recurring_expenses(client):
     # 1. Create a real user for the session with totp_secret
@@ -984,7 +1011,7 @@ def test_category_management(client):
     }, follow_redirects=True)
     
     # Delete
-    client.post('/delete_category/1', follow_redirects=True)
+    client.get('/delete_category/1', follow_redirects=True)
     
     resp = client.get('/categories')
     assert resp.status_code == 200
