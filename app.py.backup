@@ -16,21 +16,10 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 from groq import Groq
 import re
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
 
 # --- CONFIGURATION ---
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'  # Change to random key
-
-# Initialize Flask-Limiter
-limiter = Limiter(
-    app=app,
-    key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"]
-)
 
 _RATES_CACHE = {
     "timestamp": 0,
@@ -39,9 +28,9 @@ _RATES_CACHE = {
 CACHE_TTL = 60 * 60  # 1 hour
 
 # Initialize Groq Client (Ensure API Key is set)
-groq_api_key = os.environ.get("GROQ_API_KEY", "gsk_abcd1234")  # Set GROQ_API_KEY environment variable
+# Ideally, use os.environ.get("GROQ_API_KEY")
 groq_client = Groq(
-    api_key=groq_api_key
+    api_key="YOUR_GROQ_API_KEY_HERE" 
 )
 
 # --- DATABASE HELPERS ---
