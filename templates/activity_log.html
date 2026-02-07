@@ -1,54 +1,185 @@
 {% extends "base.html" %}
 
+{% block title %}Activity Log - Expense Tracker{% endblock %}
+
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-10">
-        <div class="card shadow-sm">
-            <div class="card-header bg-info text-white">
-                <h4 class="mb-0">Recent Activity Log (Decrypted)</h4>
+<div class="container">
+    <h2>📋 Activity Log</h2>
+    <p class="subtitle">Track all changes to your expenses, budgets, and categories</p>
+
+    <!-- Filter Panel -->
+    <div class="filter-panel">
+        <form method="GET" action="{{ url_for('activity_log') }}" class="filter-form">
+            <div class="filter-row">
+                <div class="filter-group">
+                    <label for="entity_type">Entity Type:</label>
+                    <select name="entity_type" id="entity_type">
+                        <option value="">All</option>
+                        <option value="expense" {% if filters.entity_type=='expense' %}selected{% endif %}>Expenses
+                        </option>
+                        <option value="budget" {% if filters.entity_type=='budget' %}selected{% endif %}>Budgets
+                        </option>
+                        <option value="category" {% if filters.entity_type=='category' %}selected{% endif %}>Categories
+                        </option>
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label for="action">Action:</label>
+                    <select name="action" id="action">
+                        <option value="">All</option>
+                        <option value="INSERT" {% if filters.action=='INSERT' %}selected{% endif %}>Created</option>
+                        <option value="UPDATE" {% if filters.action=='UPDATE' %}selected{% endif %}>Updated</option>
+                        <option value="DELETE" {% if filters.action=='DELETE' %}selected{% endif %}>Deleted</option>
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label for="date_from">Date From:</label>
+                    <input type="date" name="date_from" id="date_from" value="{{ filters.date_from }}">
+                </div>
+
+                <div class="filter-group">
+                    <label for="date_to">Date To:</label>
+                    <input type="date" name="date_to" id="date_to" value="{{ filters.date_to }}">
+                </div>
+
+                <div class="filter-actions">
+                    <button type="submit" class="btn btn-primary">Apply Filters</button>
+                    <a href="{{ url_for('activity_log') }}" class="btn btn-secondary">Reset</a>
+                </div>
             </div>
-            <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-hover mb-0">
-                        <thead class="table-light">
-                            <tr>
-                                <th>Date</th>
-                                <th>Type</th>
-                                <th>Category</th>
-                                <th>Description</th>
-                                <th>Amount</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for activity in activities %}
-                            <tr>
-                                <td>{{ activity.date }}</td>
-                                <td>
-                                    {% if activity.type == 'Expense' %}
-                                    <span class="badge bg-danger">Expense</span>
-                                    {% else %}
-                                    <span class="badge bg-success">Budget</span>
-                                    {% endif %}
-                                </td>
-                                <td>{{ activity.category }}</td>
-                                <td>
-                                    {# This is the key part: The Python code has already decrypted this for us #}
-                                    {{ activity.description or '-' }}
-                                </td>
-                                <td class="fw-bold">
-                                    {{ activity.currency }} {{ "%.2f"|format(activity.amount) }}
-                                </td>
-                            </tr>
-                            {% else %}
-                            <tr>
-                                <td colspan="5" class="text-center text-muted py-4">No recent activity found.</td>
-                            </tr>
+        </form>
+    </div>
+
+    <!-- Results Summary -->
+    {% if total_entries > 0 %}
+    <div class="results-summary">
+        Showing {{ ((page - 1) * 20) + 1 }} - {{ [total_entries, page * 20]|min }} of {{ total_entries }} entries
+    </div>
+    {% endif %}
+
+    <!-- Timeline -->
+    <div class="timeline">
+        {% if logs|length == 0 %}
+        <div class="empty-state">
+            <p>No activity log entries found.</p>
+            <p>Start by adding expenses, budgets, or categories!</p>
+        </div>
+        {% else %}
+        {% for log in logs %}
+        <div class="timeline-item">
+            <div class="timeline-marker"></div>
+            <div class="timeline-content">
+                <div class="timeline-header">
+                    <div class="timeline-info">
+                        <span class="action-badge action-{{ log.action }}">{{ log.action }}</span>
+                        <span class="entity-type">{{ log.entity_type.capitalize() }} #{{ log.entity_id }}</span>
+                        <span class="timestamp">{{ log.timestamp }}</span>
+                    </div>
+                    {% if log.action in ['UPDATE', 'DELETE'] %}
+                    <form method="POST" action="{{ url_for('revert_change', audit_id=log.id) }}" class="revert-form">
+                        <button type="submit" class="btn-revert"
+                            onclick="return confirm('Are you sure you want to revert this change?')">
+                            ↶ Revert
+                        </button>
+                    </form>
+                    {% elif log.action == 'INSERT' %}
+                    <form method="POST" action="{{ url_for('revert_change', audit_id=log.id) }}" class="revert-form">
+                        <button type="submit" class="btn-revert btn-revert-delete"
+                            onclick="return confirm('This will DELETE the created item. Are you sure?')">
+                            🗑️ Undo Creation
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+
+                <div class="timeline-details">
+                    {% if log.action == 'INSERT' %}
+                    <div class="change-box new-values">
+                        <h4>Created</h4>
+                        <div class="values-grid">
+                            {% for key, value in log.new_values.items() %}
+                            {% if key not in ['id', 'user_id'] %}
+                            <div class="value-item">
+                                <span class="key">{{ key|replace('_', ' ')|title }}:</span>
+                                <span class="value">{{ value }}</span>
+                            </div>
+                            {% endif %}
                             {% endfor %}
-                        </tbody>
-                    </table>
+                        </div>
+                    </div>
+
+                    {% elif log.action == 'UPDATE' %}
+                    <div class="change-comparison">
+                        <div class="change-box old-values">
+                            <h4>Before</h4>
+                            <div class="values-grid">
+                                {% for key, value in log.old_values.items() %}
+                                {% if key not in ['id', 'user_id'] %}
+                                <div class="value-item {% if log.new_values[key] != value %}changed{% endif %}">
+                                    <span class="key">{{ key|replace('_', ' ')|title }}:</span>
+                                    <span class="value">{{ value }}</span>
+                                </div>
+                                {% endif %}
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="change-arrow">→</div>
+
+                        <div class="change-box new-values">
+                            <h4>After</h4>
+                            <div class="values-grid">
+                                {% for key, value in log.new_values.items() %}
+                                {% if key not in ['id', 'user_id'] %}
+                                <div class="value-item {% if log.old_values[key] != value %}changed{% endif %}">
+                                    <span class="key">{{ key|replace('_', ' ')|title }}:</span>
+                                    <span class="value">{{ value }}</span>
+                                </div>
+                                {% endif %}
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+
+                    {% elif log.action == 'DELETE' %}
+                    <div class="change-box deleted-values">
+                        <h4>Deleted Data</h4>
+                        <div class="values-grid">
+                            {% for key, value in log.old_values.items() %}
+                            {% if key not in ['id', 'user_id'] %}
+                            <div class="value-item">
+                                <span class="key">{{ key|replace('_', ' ')|title }}:</span>
+                                <span class="value">{{ value }}</span>
+                            </div>
+                            {% endif %}
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
         </div>
+        {% endfor %}
+        {% endif %}
     </div>
+
+    <!-- Pagination -->
+    {% if total_pages > 1 %}
+    <div class="pagination">
+        {% if page > 1 %}
+        <a href="{{ url_for('activity_log', entity_type=filters.entity_type, action=filters.action, date_from=filters.date_from, date_to=filters.date_to, page=page-1) }}"
+            class="btn btn-secondary">← Previous</a>
+        {% endif %}
+
+        <span class="page-info">Page {{ page }} of {{ total_pages }}</span>
+
+        {% if page < total_pages %} <a
+            href="{{ url_for('activity_log', entity_type=filters.entity_type, action=filters.action, date_from=filters.date_from, date_to=filters.date_to, page=page+1) }}"
+            class="btn btn-secondary">Next →</a>
+            {% endif %}
+    </div>
+    {% endif %}
 </div>
 {% endblock %}
