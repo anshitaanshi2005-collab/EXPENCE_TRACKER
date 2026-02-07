@@ -10,7 +10,8 @@ def app():
     # Configure app for testing
     flask_app.config.update({
         "TESTING": True,
-        "JWT_SECRET": "test-secret",
+        "JWT_SECRET": "test-secret-key-that-is-at-least-32-bytes-long-for-security",
+        "RATELIMIT_ENABLED": False,  # Disable rate limiting for tests
     })
     
     # Use a unique shared in-memory database for this test
