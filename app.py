@@ -104,7 +104,7 @@ groq_client = Groq(
 DB_PATH = 'expenses.db'
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, uri=True)
     conn.row_factory = sqlite3.Row
     return conn
 

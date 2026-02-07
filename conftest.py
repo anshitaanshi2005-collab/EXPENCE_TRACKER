@@ -16,13 +16,21 @@ def app():
     # Use a unique shared in-memory database for this test
     db_name = f"test_{uuid.uuid4().hex}"
     # Force the module-level DB_PATH to use the in-memory URI
-    app_module.DB_PATH = f"file:{db_name}?mode=memory&cache=shared"
+    db_uri = f"file:{db_name}?mode=memory&cache=shared"
+    app_module.DB_PATH = db_uri
+    
+    # IMPORTANT: Keep at least one connection open to the in-memory database
+    # otherwise it will be destroyed when the last connection closes.
+    keep_alive_conn = sqlite3.connect(db_uri, uri=True)
     
     # Initialize the database schema
     with flask_app.app_context():
         init_db()
         
     yield flask_app
+    
+    # Cleanup: close the keep-alive connection to destroy the in-memory DB
+    keep_alive_conn.close()
     
     # No explicit cleanup needed for in-memory DB as it's destroyed when last connection closes
     # But we should ensure all connections are closed if any were leaked.
