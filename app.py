@@ -1273,8 +1273,18 @@ def dashboard():
                 'remaining': convert_from_usd(remaining_usd, display_currency)
             })
 
+    anomalies_src = compute_anomalies(user_id)
+    anomalies_display = []
+    for a in anomalies_src:
+        anomalies_display.append({
+            "category": a["category"],
+            "pct_above": a["pct_above"],
+            "current": convert_from_usd(a["current_usd"], display_currency),
+            "avg": convert_from_usd(a["avg_usd"], display_currency)
+        })
+    forecast = predict_end_of_month(user_id)
+    forecast_total = convert_from_usd(forecast["predicted_month_total_usd"], display_currency)
     conn.close()
-    
     total_budget = convert_from_usd(total_budget_usd, display_currency)
     total_budget_spent = convert_from_usd(total_budget_spent_usd, display_currency)
 
@@ -1285,7 +1295,11 @@ def dashboard():
         total_budget_spent=total_budget_spent,
         recent_expenses=recent_expenses,
         budget_alerts=budget_alerts,
-        currency=display_currency
+        currency=display_currency,
+        anomalies=anomalies_display,
+        forecast_total=forecast_total,
+        forecast_days_observed=forecast["days_observed"],
+        forecast_days_in_month=forecast["days_in_month"]
     )
 
 @app.route('/expenses')
@@ -2134,6 +2148,122 @@ def get_user_financial_context(user_id):
         "budgets": {row["category"]: round(row["amount_usd"], 2) for row in budgets},
     }
 
+def get_rolling_30_context(user_id):
+    conn = get_db_connection()
+    end_date = datetime.now().date()
+    start_date = end_date - timedelta(days=30)
+    rows = conn.execute(
+        "SELECT date, category, amount_usd FROM expenses WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date ASC",
+        (user_id, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
+    ).fetchall()
+    by_day = {}
+    for r in rows:
+        d = r['date']
+        by_day[d] = by_day.get(d, 0) + float(r['amount_usd'])
+    total = sum(float(r['amount_usd']) for r in rows)
+    days = len(by_day)
+    avg_daily = total / days if days else 0
+    by_cat = {}
+    for r in rows:
+        c = r['category']
+        by_cat[c] = by_cat.get(c, 0) + float(r['amount_usd'])
+    top_categories = sorted(by_cat.items(), key=lambda x: x[1], reverse=True)[:5]
+    conn.close()
+    return {
+        "total_30d_usd": round(total, 2),
+        "avg_daily_usd": round(avg_daily, 2),
+        "top_categories": {k: round(v, 2) for k, v in top_categories},
+        "days_covered": days
+    }
+
+def compute_anomalies(user_id, threshold_pct=30.0):
+    conn = get_db_connection()
+    today = datetime.now().date()
+    current_month_start = today.replace(day=1).strftime('%Y-%m-%d')
+    three_months_ago = (today.replace(day=1) - timedelta(days=90)).strftime('%Y-%m-%d')
+    prev_month_start = (today.replace(day=1) - timedelta(days=1)).replace(day=1).strftime('%Y-%m-%d')
+    prev_month_end = (today.replace(day=1) - timedelta(days=1)).strftime('%Y-%m-%d')
+    cur = conn.execute(
+        "SELECT category, COALESCE(SUM(amount_usd),0) as total FROM expenses WHERE user_id = ? AND date >= ? GROUP BY category",
+        (user_id, current_month_start)
+    ).fetchall()
+    prev = conn.execute(
+        "SELECT category, COALESCE(SUM(amount_usd),0) as total FROM expenses WHERE user_id = ? AND date BETWEEN ? AND ? GROUP BY category",
+        (user_id, three_months_ago, prev_month_end)
+    ).fetchall()
+    months_count = conn.execute(
+        "SELECT COUNT(DISTINCT SUBSTR(date,1,7)) FROM expenses WHERE user_id = ? AND date BETWEEN ? AND ?",
+        (user_id, three_months_ago, prev_month_end)
+    ).fetchone()[0] or 1
+    conn.close()
+    prev_map = {row['category']: float(row['total'])/months_count for row in prev}
+    anomalies = []
+    for row in cur:
+        cat = row['category']
+        cur_total = float(row['total'])
+        avg_prev = prev_map.get(cat, 0.0)
+        if avg_prev <= 0:
+            continue
+        pct_above = (cur_total - avg_prev) / avg_prev * 100.0
+        if pct_above >= threshold_pct:
+            anomalies.append({
+                "category": cat,
+                "current_usd": round(cur_total, 2),
+                "avg_usd": round(avg_prev, 2),
+                "pct_above": round(pct_above, 1)
+            })
+    return anomalies
+
+def predict_end_of_month(user_id):
+    conn = get_db_connection()
+    today = datetime.now().date()
+    start = today.replace(day=1)
+    end = (start.replace(month=start.month % 12 + 1, day=1) - timedelta(days=1))
+    rows = conn.execute(
+        "SELECT date, COALESCE(SUM(amount_usd),0) as total FROM expenses WHERE user_id = ? AND date BETWEEN ? AND ? GROUP BY date ORDER BY date ASC",
+        (user_id, start.strftime('%Y-%m-%d'), today.strftime('%Y-%m-%d'))
+    ).fetchall()
+    conn.close()
+    x = []
+    y = []
+    day_index_map = {}
+    base = start
+    cumulative = 0.0
+    for r in rows:
+        d = datetime.strptime(r['date'], '%Y-%m-%d').date()
+        idx = (d - base).days + 1
+        cumulative += float(r['total'])
+        x.append(idx)
+        y.append(cumulative)
+        day_index_map[idx] = cumulative
+    if len(x) >= 3:
+        n = len(x)
+        sum_x = float(sum(x))
+        sum_y = float(sum(y))
+        sum_xx = float(sum(i*i for i in x))
+        sum_xy = float(sum(x[i]*y[i] for i in range(n)))
+        denom = n*sum_xx - sum_x*sum_x
+        if denom != 0:
+            b = (n*sum_xy - sum_x*sum_y) / denom
+            a = (sum_y - b*sum_x) / n
+            last_idx = (end - base).days + 1
+            forecast = a + b*last_idx
+        else:
+            avg_daily = (y[-1] / x[-1]) if x[-1] else 0.0
+            last_idx = (end - base).days + 1
+            forecast = avg_daily * last_idx
+    elif x:
+        avg_daily = (y[-1] / x[-1]) if x[-1] else 0.0
+        last_idx = (end - base).days + 1
+        forecast = avg_daily * last_idx
+    else:
+        forecast = 0.0
+    return {
+        "predicted_month_total_usd": round(max(forecast, 0.0), 2),
+        "days_in_month": (end - base).days + 1,
+        "days_observed": (today - base).days + 1
+    }
+
 @app.route('/chatbot', methods=['POST'])
 def chatbot():
     if 'user_id' not in session:
@@ -2146,6 +2276,7 @@ def chatbot():
         return {"reply": "Please enter a message."}
 
     context = get_user_financial_context(session['user_id'])
+    rolling = get_rolling_30_context(session['user_id'])
     system_prompt = f"""
     You are a personal finance assistant.
     User data (USD):
@@ -2153,6 +2284,10 @@ def chatbot():
     - Monthly expenses: {context['monthly_expenses_usd']}
     - Category totals: {context['categories']}
     - Budgets: {context['budgets']}
+    Rolling 30-day summary (USD):
+    - Total 30d: {rolling['total_30d_usd']}
+    - Avg daily: {rolling['avg_daily_usd']}
+    - Top categories: {rolling['top_categories']}
     Rules: Do not invent data. Answer clearly.
     """
 
@@ -2170,6 +2305,172 @@ def chatbot():
     except Exception as e:
         print(e)
         return {"reply": "AI service error. Try again later."}
+
+@app.route('/api/anomalies')
+@token_required
+def api_anomalies(current_user_id):
+    anomalies = compute_anomalies(current_user_id)
+    return api_response(data=anomalies)
+
+@app.route('/api/forecast')
+@token_required
+def api_forecast(current_user_id):
+    forecast = predict_end_of_month(current_user_id)
+    return api_response(data=forecast)
+
+@app.route('/monthly_audit_pdf')
+def monthly_audit_pdf():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    user_id = session['user_id']
+    display_currency = session.get('currency', 'USD')
+    conn = get_db_connection()
+    end_date = datetime.now().date()
+    start_date = end_date - timedelta(days=30)
+    rows = conn.execute(
+        "SELECT date, category, description, amount_usd FROM expenses WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date DESC",
+        (user_id, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
+    ).fetchall()
+    conn.close()
+    data = []
+    total_usd = 0.0
+    for r in rows:
+        amt_disp = convert_from_usd(float(r['amount_usd']), display_currency)
+        total_usd += float(r['amount_usd'])
+        data.append({
+            "date": r['date'],
+            "category": r['category'],
+            "description": decrypt_data(r['description']),
+            "amount": f"{amt_disp:.2f}"
+        })
+    total_disp = convert_from_usd(total_usd, display_currency)
+    anomalies = compute_anomalies(user_id)
+    forecast = predict_end_of_month(user_id)
+    rolling = get_rolling_30_context(user_id)
+    exec_summary_prompt = (
+        f"Summarize 30-day spending in {display_currency}. "
+        f"Total: {convert_from_usd(rolling['total_30d_usd'], display_currency):.2f}, "
+        f"Avg daily: {convert_from_usd(rolling['avg_daily_usd'], display_currency):.2f}, "
+        f"Top categories: {rolling['top_categories']}. "
+        f"Anomalies: {anomalies}. "
+        f"Forecast end-of-month spend (USD): {forecast['predicted_month_total_usd']:.2f}. "
+        f"Provide 3 actionable recommendations."
+    )
+    summary_text = ""
+    try:
+        resp = groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": "You are a concise financial analyst."},
+                {"role": "user", "content": exec_summary_prompt}
+            ],
+            temperature=0.3,
+            max_tokens=250
+        )
+        summary_text = resp.choices[0].message.content
+    except Exception:
+        summary_text = "AI summary unavailable."
+    html = render_template(
+        'report_pdf.html',
+        date=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        currency=display_currency,
+        total_amount=f"{total_disp:.2f}",
+        count=len(data),
+        data=data,
+        executive_summary=summary_text
+    )
+    output = io.BytesIO()
+    status = pisa.CreatePDF(src=html, dest=output)
+    if status.err:
+        return f"PDF generation error: {status.err}", 500
+    output.seek(0)
+    return send_file(output, mimetype='application/pdf', as_attachment=True, download_name=f"monthly_audit_{datetime.now().strftime('%Y%m%d')}.pdf")
+
+def _build_monthly_audit_html(user_id, display_currency):
+    conn = get_db_connection()
+    end_date = datetime.now().date()
+    start_date = end_date - timedelta(days=30)
+    rows = conn.execute(
+        "SELECT date, category, description, amount_usd FROM expenses WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date DESC",
+        (user_id, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
+    ).fetchall()
+    conn.close()
+    data = []
+    total_usd = 0.0
+    for r in rows:
+        amt_disp = convert_from_usd(float(r['amount_usd']), display_currency)
+        total_usd += float(r['amount_usd'])
+        data.append({
+            "date": r['date'],
+            "category": r['category'],
+            "description": decrypt_data(r['description']),
+            "amount": f"{amt_disp:.2f}"
+        })
+    total_disp = convert_from_usd(total_usd, display_currency)
+    anomalies = compute_anomalies(user_id)
+    forecast = predict_end_of_month(user_id)
+    rolling = get_rolling_30_context(user_id)
+    prompt = (
+        f"Summarize 30-day spending in {display_currency}. "
+        f"Total: {convert_from_usd(rolling['total_30d_usd'], display_currency):.2f}, "
+        f"Avg daily: {convert_from_usd(rolling['avg_daily_usd'], display_currency):.2f}, "
+        f"Top categories: {rolling['top_categories']}. "
+        f"Anomalies: {anomalies}. "
+        f"Forecast end-of-month spend (USD): {forecast['predicted_month_total_usd']:.2f}. "
+        f"Provide 3 actionable recommendations."
+    )
+    summary_text = ""
+    try:
+        resp = groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": "You are a concise financial analyst."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=250
+        )
+        summary_text = resp.choices[0].message.content
+    except Exception:
+        summary_text = "AI summary unavailable."
+    html = render_template(
+        'report_pdf.html',
+        date=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        currency=display_currency,
+        total_amount=f"{total_disp:.2f}",
+        count=len(data),
+        data=data,
+        executive_summary=summary_text
+    )
+    return html
+
+def _scheduled_monthly_audits():
+    while True:
+        try:
+            now = datetime.now()
+            if now.day == 1:
+                with app.app_context():
+                    conn = get_db_connection()
+                    users = conn.execute("SELECT id FROM users").fetchall()
+                    conn.close()
+                    ym = now.strftime('%Y%m')
+                    for u in users:
+                        uid = u['id']
+                        base_dir = os.path.join('static', 'reports', str(uid))
+                        os.makedirs(base_dir, exist_ok=True)
+                        file_path = os.path.join(base_dir, f"monthly_audit_{ym}.pdf")
+                        if not os.path.exists(file_path):
+                            html = _build_monthly_audit_html(uid, 'USD')
+                            with open(file_path, 'wb') as f:
+                                pisa.CreatePDF(src=html, dest=f)
+            time.sleep(3600)
+        except Exception:
+            time.sleep(3600)
+
+def _start_scheduler():
+    import threading
+    t = threading.Thread(target=_scheduled_monthly_audits, daemon=True)
+    t.start()
 
 # ================= NEW: SPLITWISE FEATURES =================
 
@@ -2446,4 +2747,5 @@ if __name__ == '__main__':
         _RATES_CACHE["timestamp"] = time.time()
     except Exception:
         pass
+    _start_scheduler()
     app.run(debug=True)
