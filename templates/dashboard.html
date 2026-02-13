@@ -14,6 +14,52 @@
     </div>
 </div>
 
+{% if anomalies %}
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card border-danger">
+            <div class="card-header bg-danger text-white">
+                <h5 class="mb-0">🚨 Anomaly Detection</h5>
+            </div>
+            <div class="card-body">
+                {% for a in anomalies %}
+                <div class="alert alert-danger mb-2" role="alert">
+                    <strong>{{ a.category }}:</strong>
+                    {{ "%.1f"|format(a.pct_above) }}% above 3-month average.
+                    Current {{ currency }} {{ "%.2f"|format(a.current) }}, Avg {{ currency }} {{ "%.2f"|format(a.avg) }}.
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    </div>
+{% endif %}
+
+<div class="row mt-4">
+    <div class="col-md-6">
+        <div class="card border-info">
+            <div class="card-header bg-info text-white">
+                <h5 class="mb-0">📈 Forecast</h5>
+            </div>
+            <div class="card-body">
+                <p>Predicted end-of-month spend: <strong>{{ currency }} {{ "%.2f"|format(forecast_total) }}</strong></p>
+                <small>Observed {{ forecast_days_observed }} of {{ forecast_days_in_month }} days</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card border-secondary">
+            <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">📝 Monthly Audit</h5>
+                <a href="{{ url_for('monthly_audit_pdf') }}" class="btn btn-sm btn-light">Download PDF</a>
+            </div>
+            <div class="card-body">
+                <p>Generates a deep-dive report with AI summary of the last 30 days.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="row mt-4">
     <div class="col-md-3">
         <div class="card text-white bg-primary mb-3">
