@@ -8,16 +8,6 @@ import time
 import os
 import io
 import pandas as pd
-import jwt
-import pyotp
-import qrcode
-import io
-import base64
-from cryptography.fernet import Fernet
-from functools import wraps
-from flasgger import Swagger, swag_from
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
 from reportlab.lib.styles import getSampleStyleSheet
@@ -27,11 +17,6 @@ from groq import Groq
 # --- CONFIGURATION ---
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'  # Change to random key
-limiter = Limiter(
-    app=app,
-    key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"]
-)
 
 _RATES_CACHE = {
     "timestamp": 0,
@@ -40,49 +25,16 @@ _RATES_CACHE = {
 CACHE_TTL = 60 * 60  # 1 hour
 
 # Initialize Groq Client (Ensure API Key is set)
-groq_api_key = os.environ.get("GROQ_API_KEY", "gsk_abcd1234")  # Set GROQ_API_KEY environment variable
+# Ideally, use os.environ.get("GROQ_API_KEY")
 groq_client = Groq(
-    api_key=groq_api_key
+    api_key="YOUR_GROQ_API_KEY_HERE" 
 )
 
 # --- DATABASE HELPERS ---
-DB_PATH = 'expenses.db'
-
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH, uri=True)
+    conn = sqlite3.connect('expenses.db')
     conn.row_factory = sqlite3.Row
     return conn
-
-# --- API HELPERS & DECORATORS ---
-def token_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        token = None
-        if 'Authorization' in request.headers:
-            auth_header = request.headers['Authorization']
-            if auth_header.startswith('Bearer '):
-                token = auth_header.split(" ")[1]
-        
-        if not token:
-            return jsonify({'message': 'Token is missing!'}), 401
-        
-        try:
-            data = jwt.decode(token, app.config['JWT_SECRET'], algorithms=[app.config['JWT_ALGORITHM']])
-            current_user_id = data['user_id']
-        except Exception as e:
-            return jsonify({'message': 'Token is invalid!', 'error': str(e)}), 401
-            
-        return f(current_user_id, *args, **kwargs)
-    
-    return decorated
-
-def api_response(success=True, data=None, message=None, code=200):
-    response = {'success': success}
-    if data is not None:
-        response['data'] = data
-    if message is not None:
-        response['message'] = message
-    return jsonify(response), code
 
 def init_db():
     conn = get_db_connection()
@@ -93,20 +45,9 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             email TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            totp_secret TEXT
+            password TEXT NOT NULL
         )
     ''')
-
-    # Expenses Table - UPDATED with Recurring Fields
-    
-    # [MIGRATION] Add totp_secret column if it doesn't exist
-    cursor = conn.cursor()
-    cursor.execute("PRAGMA table_info(users)")
-    columns = [info[1] for info in cursor.fetchall()]
-    if 'totp_secret' not in columns:
-        print("Migrating DB: Adding totp_secret to users table...")
-        conn.execute('ALTER TABLE users ADD COLUMN totp_secret TEXT')
     
     # Expenses Table (with multi-currency support)
     conn.execute('''
@@ -119,23 +60,9 @@ def init_db():
             category TEXT NOT NULL,
             description TEXT,
             date TEXT NOT NULL,
-            is_recurring BOOLEAN DEFAULT 0,
-            frequency TEXT DEFAULT 'monthly',
-            next_due_date TEXT,
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
     ''')
-    
-    # [MIGRATION] Check for new columns in expenses
-    cursor = conn.cursor()
-    cursor.execute("PRAGMA table_info(expenses)")
-    columns = [info[1] for info in cursor.fetchall()]
-    
-    if 'is_recurring' not in columns:
-        print("Migrating DB: Adding recurring fields...")
-        conn.execute('ALTER TABLE expenses ADD COLUMN is_recurring BOOLEAN DEFAULT 0')
-        conn.execute('ALTER TABLE expenses ADD COLUMN frequency TEXT DEFAULT "monthly"')
-        conn.execute('ALTER TABLE expenses ADD COLUMN next_due_date TEXT')
     
     # Budgets Table
     conn.execute('''
@@ -158,7 +85,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             name TEXT NOT NULL,
-            icon TEXT DEFAULT '💰',
+            icon TEXT DEFAULT '📁',
             color TEXT DEFAULT '#6c757d',
             FOREIGN KEY (user_id) REFERENCES users (id),
             UNIQUE(user_id, name)
@@ -170,9 +97,6 @@ def init_db():
     conn.execute('CREATE INDEX IF NOT EXISTS idx_expenses_user_category ON expenses(user_id, category)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_budgets_user ON budgets(user_id)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_categories_user ON categories(user_id)')
-    # Analytics-specific indexes
-    conn.execute('CREATE INDEX IF NOT EXISTS idx_expenses_user_date_category ON expenses(user_id, date, category)')
-    conn.execute('CREATE INDEX IF NOT EXISTS idx_expenses_date_amount ON expenses(date, amount_usd)')
     
     # --- NEW SPLITWISE TABLES ---
     conn.execute('''
@@ -338,36 +262,6 @@ def calculate_group_debts(group_id):
     conn.close()
     return transactions
 
-# --- CATEGORY HELPERS ---
-def get_user_categories(user_id):
-    """Get all categories for a user, including default categories if none exist"""
-    conn = get_db_connection()
-    custom_categories = conn.execute(
-        'SELECT * FROM categories WHERE user_id = ? ORDER BY name',
-        (user_id,)
-    ).fetchall()
-    conn.close()
-    
-    # Convert to list of dicts
-    categories = [dict(row) for row in custom_categories]
-    
-    # If no custom categories, return default ones
-    if not categories:
-        default_categories = ['Food', 'Transportation', 'Entertainment', 'Shopping', 'Bills', 'Healthcare', 'Other']
-        return [{'name': cat, 'icon': '📁', 'color': '#6c757d'} for cat in default_categories]
-    
-    return categories
-
-def get_category_by_id(category_id, user_id):
-    """Get a specific category by ID for the given user"""
-    conn = get_db_connection()
-    category = conn.execute(
-        'SELECT * FROM categories WHERE id = ? AND user_id = ?',
-        (category_id, user_id)
-    ).fetchone()
-    conn.close()
-    return category
-
 # --- ROUTES ---
 
 @app.route('/set_currency', methods=['POST'])
@@ -384,7 +278,6 @@ def index():
     return render_template('index.html')
 
 @app.route('/signup', methods=['GET', 'POST'])
-@limiter.limit("5 per minute")
 def signup():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
@@ -392,19 +285,9 @@ def signup():
         password = request.form.get('password', '')
         confirm_password = request.form.get('confirm_password', '')
         
+        # Validation
         if not username or not email or not password:
             flash('Please fill in all fields!')
-            return render_template('signup.html')
-        
-        # Email format validation
-        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-        if not re.match(email_pattern, email):
-            flash('Please enter a valid email address!')
-            return render_template('signup.html')
-        
-        # Username validation (alphanumeric and underscore only)
-        if not re.match(r'^[a-zA-Z0-9_]{3,}$', username):
-            flash('Username must be at least 3 characters (alphanumeric and underscore only)!')
             return render_template('signup.html')
         
         if password != confirm_password:
@@ -418,111 +301,39 @@ def signup():
         conn = get_db_connection()
         try:
             hashed_password = generate_password_hash(password)
-            # Generate 2FA Secret immediately upon signup
-            totp_secret = pyotp.random_base32()
-            
-            cursor = conn.cursor()
-            cursor.execute(
-                'INSERT INTO users (username, email, password, totp_secret) VALUES (?, ?, ?, ?)',
-                (username, email, hashed_password, totp_secret)
+            conn.execute(
+                'INSERT INTO users (username, email, password) VALUES (?, ?, ?)',
+                (username, email, hashed_password)
             )
             conn.commit()
-            user_id = cursor.lastrowid
-            
-            # Direct user to 2FA Setup instead of login
-            session['pre_2fa_id'] = user_id
-            flash('Account created! Please set up Two-Factor Authentication.')
-            return redirect(url_for('setup_2fa'))
-            
+            flash('Account created successfully! Please login.')
+            return redirect(url_for('login'))
         except sqlite3.IntegrityError as e:
             if 'username' in str(e):
                 flash('Username already exists!')
-            else:
+            elif 'email' in str(e):
                 flash('Email already exists!')
+            else:
+                flash('Signup failed. Please try again.')
+        except Exception as e:
+            flash(f'Error: {str(e)}')
         finally:
             conn.close()
     
     return render_template('signup.html')
 
 @app.route('/login', methods=['GET', 'POST'])
-@limiter.limit("5 per minute")
 def login():
-    if 'user_id' in session:
-        return redirect(url_for('dashboard'))
-    
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
-        
-        if not username or not password:
-            flash('Please enter both username and password!')
-            return render_template('login.html')
         
         conn = get_db_connection()
         user = conn.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
         conn.close()
         
         if user and check_password_hash(user['password'], password):
-            # Store ID in a temporary session variable
-            session['pre_2fa_id'] = user['id']
-            
-            # If user has no secret (legacy user), force setup. Otherwise verify.
-            if not user['totp_secret']:
-                return redirect(url_for('setup_2fa'))
-            else:
-                return redirect(url_for('verify_2fa'))
-        else:
-            flash('Invalid credentials!')
-            
-    return render_template('login.html')
-
-@app.route('/setup_2fa')
-def setup_2fa():
-    if 'pre_2fa_id' not in session:
-        return redirect(url_for('login'))
-    
-    conn = get_db_connection()
-    user = conn.execute('SELECT * FROM users WHERE id = ?', (session['pre_2fa_id'],)).fetchone()
-    
-    # Use existing secret or generate new one if missing
-    secret = user['totp_secret']
-    if not secret:
-        secret = pyotp.random_base32()
-        conn.execute('UPDATE users SET totp_secret = ? WHERE id = ?', (secret, user['id']))
-        conn.commit()
-    conn.close()
-    
-    # Generate QR Code
-    totp_uri = pyotp.totp.TOTP(secret).provisioning_uri(
-        name=user['email'], 
-        issuer_name='ExpenseTracker'
-    )
-    
-    img = qrcode.make(totp_uri)
-    buf = io.BytesIO()
-    img.save(buf)
-    buf.seek(0)
-    qr_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
-    
-    return render_template('setup_2fa.html', qr_code=qr_b64, secret=secret)
-
-@app.route('/verify_2fa', methods=['GET', 'POST'])
-def verify_2fa():
-    if 'pre_2fa_id' not in session:
-        return redirect(url_for('login'))
-        
-    if request.method == 'POST':
-        token = request.form.get('token')
-        
-        conn = get_db_connection()
-        user = conn.execute('SELECT * FROM users WHERE id = ?', (session['pre_2fa_id'],)).fetchone()
-        conn.close()
-        
-        totp = pyotp.TOTP(user['totp_secret'])
-        
-        if totp.verify(token):
-            # Success: Elevate to full session
-            session['user_id'] = session['pre_2fa_id']
+            session['user_id'] = user['id']
             session['username'] = user['username']
             flash('Logged in successfully!')
             return redirect(url_for('dashboard'))
@@ -532,9 +343,8 @@ def verify_2fa():
 
 @app.route('/logout')
 def logout():
-    username = session.get('username', 'User')
     session.clear()
-    flash(f'Goodbye {username}! You have been logged out.')
+    flash('Logged out successfully!')
     return redirect(url_for('index'))
 
 # --- CATEGORY ROUTES ---
@@ -554,7 +364,7 @@ def add_category():
     
     if request.method == 'POST':
         name = request.form['name'].strip()
-        icon = request.form.get('icon', '💰')
+        icon = request.form.get('icon', '📁')
         color = request.form.get('color', '#6c757d')
         
         if not name:
@@ -727,18 +537,8 @@ def dashboard():
                 'remaining': convert_from_usd(remaining_usd, display_currency)
             })
 
-    anomalies_src = compute_anomalies(user_id)
-    anomalies_display = []
-    for a in anomalies_src:
-        anomalies_display.append({
-            "category": a["category"],
-            "pct_above": a["pct_above"],
-            "current": convert_from_usd(a["current_usd"], display_currency),
-            "avg": convert_from_usd(a["avg_usd"], display_currency)
-        })
-    forecast = predict_end_of_month(user_id)
-    forecast_total = convert_from_usd(forecast["predicted_month_total_usd"], display_currency)
     conn.close()
+    
     total_budget = convert_from_usd(total_budget_usd, display_currency)
     total_budget_spent = convert_from_usd(total_budget_spent_usd, display_currency)
 
@@ -749,11 +549,7 @@ def dashboard():
         total_budget_spent=total_budget_spent,
         recent_expenses=recent_expenses,
         budget_alerts=budget_alerts,
-        currency=display_currency,
-        anomalies=anomalies_display,
-        forecast_total=forecast_total,
-        forecast_days_observed=forecast["days_observed"],
-        forecast_days_in_month=forecast["days_in_month"]
+        currency=display_currency
     )
 
 @app.route('/expenses')
@@ -762,31 +558,19 @@ def expenses():
         return redirect(url_for('login'))
     
     conn = get_db_connection()
-    # 1. Fetch into 'raw_expenses'
-    raw_expenses = conn.execute(
+    expenses_list = conn.execute(
         'SELECT * FROM expenses WHERE user_id = ? ORDER BY date DESC', 
         (session['user_id'],)
     ).fetchall()
     conn.close()
-
-    # 2. Decrypt into 'expenses_list'
-    expenses_list = []
-    for row in raw_expenses:
-        r = dict(row)
-        r['description'] = decrypt_data(r['description'])
-        expenses_list.append(r)
     
-    user_categories = get_user_categories(session['user_id'])
-    return render_template('expenses.html', expenses=expenses_list, categories=user_categories)
+    categories = ['Food', 'Transportation', 'Entertainment', 'Shopping', 'Bills', 'Healthcare', 'Other']
+    return render_template('expenses.html', expenses=expenses_list, categories=categories)
 
 @app.route('/search_expenses')
 def search_expenses():
     if 'user_id' not in session:
         return redirect(url_for('login'))
-    
-    user_categories = get_user_categories(session['user_id'])
-
-    keyword = request.args.get('keyword', '').lower()
     
     # Get filter parameters
     date_from = request.args.get('date_from', '')
@@ -794,6 +578,7 @@ def search_expenses():
     categories_param = request.args.get('categories', '')
     amount_min = request.args.get('amount_min', '')
     amount_max = request.args.get('amount_max', '')
+    keyword = request.args.get('keyword', '')
     sort_by = request.args.get('sort_by', 'date')
     sort_order = request.args.get('sort_order', 'desc')
     
@@ -801,6 +586,7 @@ def search_expenses():
     query = 'SELECT * FROM expenses WHERE user_id = ?'
     params = [session['user_id']]
     
+    # Date range filter
     if date_from:
         query += ' AND date >= ?'
         params.append(date_from)
@@ -808,6 +594,7 @@ def search_expenses():
         query += ' AND date <= ?'
         params.append(date_to)
     
+    # Category filter (multiple categories supported)
     if categories_param:
         selected_categories = [c.strip() for c in categories_param.split(',') if c.strip()]
         if selected_categories:
@@ -815,6 +602,7 @@ def search_expenses():
             query += f' AND category IN ({placeholders})'
             params.extend(selected_categories)
     
+    # Amount range filter (using amount_usd for consistent comparison)
     if amount_min:
         try:
             min_usd = convert_to_usd(float(amount_min), session.get('currency', 'USD'))
@@ -822,7 +610,6 @@ def search_expenses():
             params.append(min_usd)
         except ValueError:
             pass
-            
     if amount_max:
         try:
             max_usd = convert_to_usd(float(amount_max), session.get('currency', 'USD'))
@@ -831,14 +618,19 @@ def search_expenses():
         except ValueError:
             pass
     
-    # Sorting
+    # Keyword search in description
+    if keyword:
+        query += ' AND description LIKE ?'
+        params.append(f'%{keyword}%')
+    
+    # Sorting (validate sort_by to prevent SQL injection)
     valid_sort_columns = {'date': 'date', 'amount': 'amount_usd', 'category': 'category'}
     sort_column = valid_sort_columns.get(sort_by, 'date')
     sort_direction = 'ASC' if sort_order.lower() == 'asc' else 'DESC'
     query += f' ORDER BY {sort_column} {sort_direction}'
     
     conn = get_db_connection()
-    raw_expenses = conn.execute(query, params).fetchall()
+    expenses_list = conn.execute(query, params).fetchall()
     conn.close()
     
     # Categories for the filter dropdown
@@ -869,46 +661,14 @@ def add_expense():
         currency = request.form['currency']
         description = request.form['description']
         date = request.form['date'] or datetime.now().strftime('%Y-%m-%d')
-        
-        # Recurring Logic
-        is_recurring = 1 if 'is_recurring' in request.form else 0
-        frequency = request.form.get('frequency', 'monthly')
-        
-        # If recurring, the "next due date" starts 1 cycle from the entered date
-        # OR we can set it to the entered date if we want the *next* one to be tracked.
-        # Usually, if I add a bill today, I want the system to remind me *next* month.
-        next_due_date = None
-        if is_recurring:
-            # Simple logic: If I pay today, next due is next month
-            dt = datetime.strptime(date, '%Y-%m-%d')
-            if frequency == 'monthly':
-                 # (Add month logic same as above helper)
-                month = dt.month + 1
-                year = dt.year
-                if month > 12:
-                    month = 1
-                    year += 1
-                try:
-                    next_due_date = dt.replace(year=year, month=month).strftime('%Y-%m-%d')
-                except ValueError:
-                    import calendar
-                    last_day = calendar.monthrange(year, month)[1]
-                    next_due_date = dt.replace(year=year, month=month, day=last_day).strftime('%Y-%m-%d')
-            elif frequency == 'weekly':
-                next_due_date = (dt + timedelta(days=7)).strftime('%Y-%m-%d')
-            elif frequency == 'yearly':
-                next_due_date = dt.replace(year=dt.year + 1).strftime('%Y-%m-%d')
 
         amount_usd = convert_to_usd(amount, currency)
 
-        raw_description = request.form['description']
-        description = encrypt_data(raw_description)
-
         conn = get_db_connection()
         conn.execute(
-            '''INSERT INTO expenses (user_id, amount, currency, amount_usd, category, description, date, is_recurring, frequency, next_due_date) 
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-            (session['user_id'], amount, currency, amount_usd, category, description, date, is_recurring, frequency, next_due_date)
+            '''INSERT INTO expenses (user_id, amount, currency, amount_usd, category, description, date) 
+               VALUES (?, ?, ?, ?, ?, ?, ?)''',
+            (session['user_id'], amount, currency, amount_usd, category, description, date)
         )
         conn.commit()
         conn.close()
@@ -934,9 +694,6 @@ def edit_expense(expense_id):
         date = request.form['date'] or datetime.now().strftime('%Y-%m-%d')
         amount_usd = convert_to_usd(amount, currency)
 
-        raw_description = request.form['description']
-        description = encrypt_data(raw_description)
-
         conn.execute(
             '''UPDATE expenses SET amount=?, currency=?, amount_usd=?, category=?, description=?, date=? 
                WHERE id=? AND user_id=?''',
@@ -955,13 +712,11 @@ def edit_expense(expense_id):
     if not expense:
         flash('Expense not found!')
         return redirect(url_for('expenses'))
-    
-    expense_dict = dict(expense)
-    expense_dict['description'] = decrypt_data(expense['description'])
 
     user_categories = get_user_categories(session['user_id'])
-    return render_template('edit_expense.html', expense=expense_dict, categories=user_categories, selected_currency=expense_dict['currency'])
+    return render_template('edit_expense.html', expense=expense, categories=user_categories, selected_currency=expense['currency'])
 
+# ✅ BUG FIXED HERE: delete_expense (Unreachable code issue resolved)
 @app.route('/delete_expense/<int:expense_id>')
 def delete_expense(expense_id):
     if 'user_id' not in session:
@@ -985,262 +740,41 @@ def analytics():
 
     conn = get_db_connection()
     display_currency = session.get('currency', 'INR')
-    user_id = session['user_id']
-    
-    # Get time range parameters
-    time_range = request.args.get('range', '7')  # 7, 30, 90, 365, or 'custom'
-    custom_from = request.args.get('from', '')
-    custom_to = request.args.get('to', '')
-    
-    # Calculate date range
+
+    # Daily Spending (Last 7 Days)
     end_date = datetime.now()
-    if time_range == 'custom' and custom_from and custom_to:
-        start_date = datetime.strptime(custom_from, '%Y-%m-%d')
-        end_date = datetime.strptime(custom_to, '%Y-%m-%d')
-        days_count = (end_date - start_date).days + 1
-    else:
-        days = int(time_range) if time_range.isdigit() else 7
-        start_date = end_date - timedelta(days=days-1)
-        days_count = days
-    
-    # --- DAILY SPENDING TREND ---
-    daily_labels = []
+    start_date = end_date - timedelta(days=6)
     daily_data = []
-    
-    for i in range(days_count):
+    labels = []
+
+    for i in range(7):
         current_date = (start_date + timedelta(days=i)).strftime('%Y-%m-%d')
-        daily_labels.append((start_date + timedelta(days=i)).strftime('%b %d'))
+        labels.append((start_date + timedelta(days=i)).strftime('%b %d'))
         
         total_usd = conn.execute(
             'SELECT COALESCE(SUM(amount_usd), 0) FROM expenses WHERE user_id=? AND date=?',
-            (user_id, current_date)
+            (session['user_id'], current_date)
         ).fetchone()[0]
-        daily_data.append(round(convert_from_usd(total_usd, display_currency), 2))
-    
-    # --- CATEGORY BREAKDOWN ---
+        daily_data.append(convert_from_usd(total_usd, display_currency))
+
+    # Category Breakdown
     categories_data = conn.execute(
         '''SELECT category, COALESCE(SUM(amount_usd), 0) as total_usd 
-           FROM expenses WHERE user_id=? AND date BETWEEN ? AND ?
-           GROUP BY category''',
-        (user_id, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
+           FROM expenses WHERE user_id=? GROUP BY category''',
+        (session['user_id'],)
     ).fetchall()
-    
+
     category_labels = [row['category'] for row in categories_data]
-    category_totals = [round(convert_from_usd(row['total_usd'], display_currency), 2) for row in categories_data]
-    
-    # --- BUDGET PERFORMANCE ---
-    budgets = conn.execute('SELECT * FROM budgets WHERE user_id = ?', (user_id,)).fetchall()
-    budget_labels = []
-    budget_allocated = []
-    budget_spent = []
-    
-    for budget in budgets:
-        budget_labels.append(budget['category'])
-        budget_allocated.append(round(convert_from_usd(budget['amount_usd'], display_currency), 2))
-        
-        # Calculate period
-        if budget['period'] == 'monthly':
-            period_start = datetime.now().replace(day=1).strftime('%Y-%m-%d')
-        elif budget['period'] == 'weekly':
-            period_start = (datetime.now() - timedelta(days=datetime.now().weekday())).strftime('%Y-%m-%d')
-        else:  # yearly
-            period_start = datetime.now().replace(month=1, day=1).strftime('%Y-%m-%d')
-        
-        actual_usd = conn.execute(
-            '''SELECT COALESCE(SUM(amount_usd), 0) FROM expenses 
-               WHERE user_id = ? AND category = ? AND date >= ?''',
-            (user_id, budget['category'], period_start)
-        ).fetchone()[0]
-        budget_spent.append(round(convert_from_usd(actual_usd, display_currency), 2))
-    
-    # --- COMPARATIVE ANALYTICS (Month-over-Month) ---
-    current_month_start = datetime.now().replace(day=1)
-    current_month_end = datetime.now()
-    last_month_end = current_month_start - timedelta(days=1)
-    last_month_start = last_month_end.replace(day=1)
-    
-    current_month_total_usd = conn.execute(
-        'SELECT COALESCE(SUM(amount_usd), 0) FROM expenses WHERE user_id=? AND date BETWEEN ? AND ?',
-        (user_id, current_month_start.strftime('%Y-%m-%d'), current_month_end.strftime('%Y-%m-%d'))
-    ).fetchone()[0]
-    
-    last_month_total_usd = conn.execute(
-        'SELECT COALESCE(SUM(amount_usd), 0) FROM expenses WHERE user_id=? AND date BETWEEN ? AND ?',
-        (user_id, last_month_start.strftime('%Y-%m-%d'), last_month_end.strftime('%Y-%m-%d'))
-    ).fetchone()[0]
-    
-    mom_current = round(convert_from_usd(current_month_total_usd, display_currency), 2)
-    mom_last = round(convert_from_usd(last_month_total_usd, display_currency), 2)
-    mom_change = round(((current_month_total_usd - last_month_total_usd) / last_month_total_usd * 100) if last_month_total_usd > 0 else 0, 1)
-    
-    # --- YEAR-OVER-YEAR COMPARISON ---
-    current_year = datetime.now().year
-    last_year = current_year - 1
-    
-    current_year_total_usd = conn.execute(
-        'SELECT COALESCE(SUM(amount_usd), 0) FROM expenses WHERE user_id=? AND strftime("%Y", date) = ?',
-        (user_id, str(current_year))
-    ).fetchone()[0]
-    
-    last_year_total_usd = conn.execute(
-        'SELECT COALESCE(SUM(amount_usd), 0) FROM expenses WHERE user_id=? AND strftime("%Y", date) = ?',
-        (user_id, str(last_year))
-    ).fetchone()[0]
-    
-    yoy_current = round(convert_from_usd(current_year_total_usd, display_currency), 2)
-    yoy_last = round(convert_from_usd(last_year_total_usd, display_currency), 2)
-    yoy_change = round(((current_year_total_usd - last_year_total_usd) / last_year_total_usd * 100) if last_year_total_usd > 0 else 0, 1)
-    
-    # --- SPENDING FORECAST (Next 30 Days) ---
-    last_30_days = end_date - timedelta(days=29)
-    recent_expenses = conn.execute(
-        'SELECT date, COALESCE(SUM(amount_usd), 0) as daily_total FROM expenses WHERE user_id=? AND date BETWEEN ? AND ? GROUP BY date',
-        (user_id, last_30_days.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
-    ).fetchall()
-    
-    if len(recent_expenses) >= 7:
-        # Simple moving average forecast
-        recent_totals = [row['daily_total'] for row in recent_expenses]
-        avg_daily_spend = sum(recent_totals) / len(recent_totals)
-        forecast_next_month = round(convert_from_usd(avg_daily_spend * 30, display_currency), 2)
-    else:
-        forecast_next_month = 0
-    
-    # --- TRANSACTION ANALYTICS ---
-    total_transactions = conn.execute(
-        'SELECT COUNT(*) FROM expenses WHERE user_id=? AND date BETWEEN ? AND ?',
-        (user_id, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
-    ).fetchone()[0]
-    
-    avg_expense_usd = conn.execute(
-        'SELECT AVG(amount_usd) FROM expenses WHERE user_id=? AND date BETWEEN ? AND ?',
-        (user_id, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
-    ).fetchone()[0] or 0
-    
-    avg_expense = round(convert_from_usd(avg_expense_usd, display_currency), 2)
-    
-    # --- SPENDING PATTERNS (Weekend vs Weekday) ---
-    weekend_usd = conn.execute(
-        '''SELECT COALESCE(SUM(amount_usd), 0) FROM expenses 
-           WHERE user_id=? AND date BETWEEN ? AND ? 
-           AND CAST(strftime('%w', date) AS INTEGER) IN (0, 6)''',
-        (user_id, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
-    ).fetchone()[0]
-    
-    weekday_usd = conn.execute(
-        '''SELECT COALESCE(SUM(amount_usd), 0) FROM expenses 
-           WHERE user_id=? AND date BETWEEN ? AND ? 
-           AND CAST(strftime('%w', date) AS INTEGER) NOT IN (0, 6)''',
-        (user_id, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
-    ).fetchone()[0]
-    
-    weekend_spending = round(convert_from_usd(weekend_usd, display_currency), 2)
-    weekday_spending = round(convert_from_usd(weekday_usd, display_currency), 2)
-    
-    # --- HEAT MAP DATA (Day of Week) ---
-    heatmap_data = [0] * 7  # Sun-Sat
-    for day in range(7):
-        day_total_usd = conn.execute(
-            '''SELECT COALESCE(SUM(amount_usd), 0) FROM expenses 
-               WHERE user_id=? AND date BETWEEN ? AND ? 
-               AND CAST(strftime('%w', date) AS INTEGER) = ?''',
-            (user_id, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'), day)
-        ).fetchone()[0]
-        heatmap_data[day] = round(convert_from_usd(day_total_usd, display_currency), 2)
-    
-    # --- CATEGORY TRENDS (Growth/Decline) ---
-    category_trends = []
-    for cat_row in categories_data:
-        cat = cat_row['category']
-        # Compare current period to previous period
-        prev_start = start_date - timedelta(days=days_count)
-        prev_end = start_date - timedelta(days=1)
-        
-        prev_total_usd = conn.execute(
-            'SELECT COALESCE(SUM(amount_usd), 0) FROM expenses WHERE user_id=? AND category=? AND date BETWEEN ? AND ?',
-            (user_id, cat, prev_start.strftime('%Y-%m-%d'), prev_end.strftime('%Y-%m-%d'))
-        ).fetchone()[0]
-        
-        current_total_usd = cat_row['total_usd']
-        change_pct = round(((current_total_usd - prev_total_usd) / prev_total_usd * 100) if prev_total_usd > 0 else 0, 1)
-        
-        category_trends.append({
-            'category': cat,
-            'change': change_pct,
-            'direction': 'up' if change_pct > 0 else 'down' if change_pct < 0 else 'stable'
-        })
-    
-    # --- FINANCIAL HEALTH SCORE (0-100) ---
-    # Based on: budget adherence (40%), spending trend (30%), transaction frequency (30%)
-    health_score = 100
-    
-    # Budget adherence
-    if budgets:
-        over_budget_count = sum(1 for i, b in enumerate(budgets) if i < len(budget_spent) and budget_spent[i] > budget_allocated[i])
-        budget_score = max(0, 100 - (over_budget_count / len(budgets) * 100))
-        health_score = budget_score * 0.4
-    else:
-        health_score = 40  # Neutral if no budgets
-    
-    # Spending trend (lower is better)
-    if mom_change < -10:
-        health_score += 30  # Decreasing spending
-    elif mom_change > 10:
-        health_score += 10  # Increasing spending
-    else:
-        health_score += 20  # Stable
-    
-    # Transaction discipline (consistent spending)
-    if total_transactions > 0:
-        avg_daily_transactions = total_transactions / days_count
-        if 0.5 <= avg_daily_transactions <= 3:
-            health_score += 30  # Good discipline
-        else:
-            health_score += 15  # Too many or too few
-    else:
-        health_score += 15
-    
-    health_score = min(100, max(0, round(health_score)))
-    
+    category_totals = [convert_from_usd(row['total_usd'], display_currency) for row in categories_data]
+
     conn.close()
 
     return render_template(
         'analytics.html',
-        # Time range
-        time_range=time_range,
-        custom_from=custom_from,
-        custom_to=custom_to,
-        # Daily trend
-        labels=json.dumps(daily_labels),
+        labels=json.dumps(labels),
         daily_data=json.dumps(daily_data),
-        # Category breakdown
         category_labels=json.dumps(category_labels),
         category_totals=json.dumps(category_totals),
-        # Budget performance
-        budget_labels=json.dumps(budget_labels),
-        budget_allocated=json.dumps(budget_allocated),
-        budget_spent=json.dumps(budget_spent),
-        # Comparative analytics
-        mom_current=mom_current,
-        mom_last=mom_last,
-        mom_change=mom_change,
-        yoy_current=yoy_current,
-        yoy_last=yoy_last,
-        yoy_change=yoy_change,
-        # Predictions
-        forecast_next_month=forecast_next_month,
-        # Statistics
-        total_transactions=total_transactions,
-        avg_expense=avg_expense,
-        weekend_spending=weekend_spending,
-        weekday_spending=weekday_spending,
-        # Heat map
-        heatmap_data=json.dumps(heatmap_data),
-        # Category trends
-        category_trends=category_trends,
-        # Health score
-        health_score=health_score,
-        # Currency
         currency=display_currency
     )
 
@@ -1356,12 +890,6 @@ def delete_budget(budget_id):
         return redirect(url_for('login'))
     
     conn = get_db_connection()
-    budget = conn.execute('SELECT * FROM budgets WHERE id=? AND user_id=?', (budget_id, session['user_id'])).fetchone()
-    if not budget:
-        flash('Budget not found!')
-        conn.close()
-        return redirect(url_for('budgets'))
-        
     conn.execute('DELETE FROM budgets WHERE id=? AND user_id=?', (budget_id, session['user_id']))
     conn.commit()
     conn.close()
@@ -1412,46 +940,31 @@ def export_data(data_type, format):
         )
     
     elif format == 'pdf':
-        # xhtml2pdf implementation
         output = io.BytesIO()
+        doc = SimpleDocTemplate(output, pagesize=letter)
+        elements = []
+        styles = getSampleStyleSheet()
         
-        # Simple HTML Template for PDF
-        html_content = f"""
-        <html>
-        <head>
-            <style>
-                body {{ font-family: Helvetica, sans-serif; }}
-                table {{ width: 100%; border-collapse: collapse; }}
-                th, td {{ padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }}
-                th {{ background-color: #f2f2f2; }}
-                h2 {{ color: #333; }}
-            </style>
-        </head>
-        <body>
-            <h2>{data_type.capitalize()} Report</h2>
-            <p>Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-            <table>
-                <thead>
-                    <tr>
-                        {''.join([f'<th>{col}</th>' for col in df.columns])}
-                    </tr>
-                </thead>
-                <tbody>
-                    {''.join(['<tr>' + ''.join([f'<td>{val}</td>' for val in row]) + '</tr>' for row in df.values])}
-                </tbody>
-            </table>
-        </body>
-        </html>
-        """
+        # Title
+        elements.append(Paragraph(f"{data_type.capitalize()} Report", styles['Title']))
+        elements.append(Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+        elements.append(Paragraph("<br/><br/>", styles['Normal']))
         
-        pisa_status = pisa.CreatePDF(
-            src=html_content,
-            dest=output
-        )
-        
-        if pisa_status.err:
-            return f"PDF generation error: {pisa_status.err}", 500
-            
+        # Table
+        data = [df.columns.tolist()] + df.values.tolist()
+        t = Table(data)
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        elements.append(t)
+        doc.build(elements)
         output.seek(0)
         return send_file(
             output,
@@ -1592,122 +1105,6 @@ def get_user_financial_context(user_id):
         "budgets": {row["category"]: round(row["amount_usd"], 2) for row in budgets},
     }
 
-def get_rolling_30_context(user_id):
-    conn = get_db_connection()
-    end_date = datetime.now().date()
-    start_date = end_date - timedelta(days=30)
-    rows = conn.execute(
-        "SELECT date, category, amount_usd FROM expenses WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date ASC",
-        (user_id, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
-    ).fetchall()
-    by_day = {}
-    for r in rows:
-        d = r['date']
-        by_day[d] = by_day.get(d, 0) + float(r['amount_usd'])
-    total = sum(float(r['amount_usd']) for r in rows)
-    days = len(by_day)
-    avg_daily = total / days if days else 0
-    by_cat = {}
-    for r in rows:
-        c = r['category']
-        by_cat[c] = by_cat.get(c, 0) + float(r['amount_usd'])
-    top_categories = sorted(by_cat.items(), key=lambda x: x[1], reverse=True)[:5]
-    conn.close()
-    return {
-        "total_30d_usd": round(total, 2),
-        "avg_daily_usd": round(avg_daily, 2),
-        "top_categories": {k: round(v, 2) for k, v in top_categories},
-        "days_covered": days
-    }
-
-def compute_anomalies(user_id, threshold_pct=30.0):
-    conn = get_db_connection()
-    today = datetime.now().date()
-    current_month_start = today.replace(day=1).strftime('%Y-%m-%d')
-    three_months_ago = (today.replace(day=1) - timedelta(days=90)).strftime('%Y-%m-%d')
-    prev_month_start = (today.replace(day=1) - timedelta(days=1)).replace(day=1).strftime('%Y-%m-%d')
-    prev_month_end = (today.replace(day=1) - timedelta(days=1)).strftime('%Y-%m-%d')
-    cur = conn.execute(
-        "SELECT category, COALESCE(SUM(amount_usd),0) as total FROM expenses WHERE user_id = ? AND date >= ? GROUP BY category",
-        (user_id, current_month_start)
-    ).fetchall()
-    prev = conn.execute(
-        "SELECT category, COALESCE(SUM(amount_usd),0) as total FROM expenses WHERE user_id = ? AND date BETWEEN ? AND ? GROUP BY category",
-        (user_id, three_months_ago, prev_month_end)
-    ).fetchall()
-    months_count = conn.execute(
-        "SELECT COUNT(DISTINCT SUBSTR(date,1,7)) FROM expenses WHERE user_id = ? AND date BETWEEN ? AND ?",
-        (user_id, three_months_ago, prev_month_end)
-    ).fetchone()[0] or 1
-    conn.close()
-    prev_map = {row['category']: float(row['total'])/months_count for row in prev}
-    anomalies = []
-    for row in cur:
-        cat = row['category']
-        cur_total = float(row['total'])
-        avg_prev = prev_map.get(cat, 0.0)
-        if avg_prev <= 0:
-            continue
-        pct_above = (cur_total - avg_prev) / avg_prev * 100.0
-        if pct_above >= threshold_pct:
-            anomalies.append({
-                "category": cat,
-                "current_usd": round(cur_total, 2),
-                "avg_usd": round(avg_prev, 2),
-                "pct_above": round(pct_above, 1)
-            })
-    return anomalies
-
-def predict_end_of_month(user_id):
-    conn = get_db_connection()
-    today = datetime.now().date()
-    start = today.replace(day=1)
-    end = (start.replace(month=start.month % 12 + 1, day=1) - timedelta(days=1))
-    rows = conn.execute(
-        "SELECT date, COALESCE(SUM(amount_usd),0) as total FROM expenses WHERE user_id = ? AND date BETWEEN ? AND ? GROUP BY date ORDER BY date ASC",
-        (user_id, start.strftime('%Y-%m-%d'), today.strftime('%Y-%m-%d'))
-    ).fetchall()
-    conn.close()
-    x = []
-    y = []
-    day_index_map = {}
-    base = start
-    cumulative = 0.0
-    for r in rows:
-        d = datetime.strptime(r['date'], '%Y-%m-%d').date()
-        idx = (d - base).days + 1
-        cumulative += float(r['total'])
-        x.append(idx)
-        y.append(cumulative)
-        day_index_map[idx] = cumulative
-    if len(x) >= 3:
-        n = len(x)
-        sum_x = float(sum(x))
-        sum_y = float(sum(y))
-        sum_xx = float(sum(i*i for i in x))
-        sum_xy = float(sum(x[i]*y[i] for i in range(n)))
-        denom = n*sum_xx - sum_x*sum_x
-        if denom != 0:
-            b = (n*sum_xy - sum_x*sum_y) / denom
-            a = (sum_y - b*sum_x) / n
-            last_idx = (end - base).days + 1
-            forecast = a + b*last_idx
-        else:
-            avg_daily = (y[-1] / x[-1]) if x[-1] else 0.0
-            last_idx = (end - base).days + 1
-            forecast = avg_daily * last_idx
-    elif x:
-        avg_daily = (y[-1] / x[-1]) if x[-1] else 0.0
-        last_idx = (end - base).days + 1
-        forecast = avg_daily * last_idx
-    else:
-        forecast = 0.0
-    return {
-        "predicted_month_total_usd": round(max(forecast, 0.0), 2),
-        "days_in_month": (end - base).days + 1,
-        "days_observed": (today - base).days + 1
-    }
-
 @app.route('/chatbot', methods=['POST'])
 def chatbot():
     if 'user_id' not in session:
@@ -1720,7 +1117,6 @@ def chatbot():
         return {"reply": "Please enter a message."}
 
     context = get_user_financial_context(session['user_id'])
-    rolling = get_rolling_30_context(session['user_id'])
     system_prompt = f"""
     You are a personal finance assistant.
     User data (USD):
@@ -1728,10 +1124,6 @@ def chatbot():
     - Monthly expenses: {context['monthly_expenses_usd']}
     - Category totals: {context['categories']}
     - Budgets: {context['budgets']}
-    Rolling 30-day summary (USD):
-    - Total 30d: {rolling['total_30d_usd']}
-    - Avg daily: {rolling['avg_daily_usd']}
-    - Top categories: {rolling['top_categories']}
     Rules: Do not invent data. Answer clearly.
     """
 
@@ -1749,172 +1141,6 @@ def chatbot():
     except Exception as e:
         print(e)
         return {"reply": "AI service error. Try again later."}
-
-@app.route('/api/anomalies')
-@token_required
-def api_anomalies(current_user_id):
-    anomalies = compute_anomalies(current_user_id)
-    return api_response(data=anomalies)
-
-@app.route('/api/forecast')
-@token_required
-def api_forecast(current_user_id):
-    forecast = predict_end_of_month(current_user_id)
-    return api_response(data=forecast)
-
-@app.route('/monthly_audit_pdf')
-def monthly_audit_pdf():
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
-    user_id = session['user_id']
-    display_currency = session.get('currency', 'USD')
-    conn = get_db_connection()
-    end_date = datetime.now().date()
-    start_date = end_date - timedelta(days=30)
-    rows = conn.execute(
-        "SELECT date, category, description, amount_usd FROM expenses WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date DESC",
-        (user_id, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
-    ).fetchall()
-    conn.close()
-    data = []
-    total_usd = 0.0
-    for r in rows:
-        amt_disp = convert_from_usd(float(r['amount_usd']), display_currency)
-        total_usd += float(r['amount_usd'])
-        data.append({
-            "date": r['date'],
-            "category": r['category'],
-            "description": decrypt_data(r['description']),
-            "amount": f"{amt_disp:.2f}"
-        })
-    total_disp = convert_from_usd(total_usd, display_currency)
-    anomalies = compute_anomalies(user_id)
-    forecast = predict_end_of_month(user_id)
-    rolling = get_rolling_30_context(user_id)
-    exec_summary_prompt = (
-        f"Summarize 30-day spending in {display_currency}. "
-        f"Total: {convert_from_usd(rolling['total_30d_usd'], display_currency):.2f}, "
-        f"Avg daily: {convert_from_usd(rolling['avg_daily_usd'], display_currency):.2f}, "
-        f"Top categories: {rolling['top_categories']}. "
-        f"Anomalies: {anomalies}. "
-        f"Forecast end-of-month spend (USD): {forecast['predicted_month_total_usd']:.2f}. "
-        f"Provide 3 actionable recommendations."
-    )
-    summary_text = ""
-    try:
-        resp = groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": "You are a concise financial analyst."},
-                {"role": "user", "content": exec_summary_prompt}
-            ],
-            temperature=0.3,
-            max_tokens=250
-        )
-        summary_text = resp.choices[0].message.content
-    except Exception:
-        summary_text = "AI summary unavailable."
-    html = render_template(
-        'report_pdf.html',
-        date=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        currency=display_currency,
-        total_amount=f"{total_disp:.2f}",
-        count=len(data),
-        data=data,
-        executive_summary=summary_text
-    )
-    output = io.BytesIO()
-    status = pisa.CreatePDF(src=html, dest=output)
-    if status.err:
-        return f"PDF generation error: {status.err}", 500
-    output.seek(0)
-    return send_file(output, mimetype='application/pdf', as_attachment=True, download_name=f"monthly_audit_{datetime.now().strftime('%Y%m%d')}.pdf")
-
-def _build_monthly_audit_html(user_id, display_currency):
-    conn = get_db_connection()
-    end_date = datetime.now().date()
-    start_date = end_date - timedelta(days=30)
-    rows = conn.execute(
-        "SELECT date, category, description, amount_usd FROM expenses WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date DESC",
-        (user_id, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
-    ).fetchall()
-    conn.close()
-    data = []
-    total_usd = 0.0
-    for r in rows:
-        amt_disp = convert_from_usd(float(r['amount_usd']), display_currency)
-        total_usd += float(r['amount_usd'])
-        data.append({
-            "date": r['date'],
-            "category": r['category'],
-            "description": decrypt_data(r['description']),
-            "amount": f"{amt_disp:.2f}"
-        })
-    total_disp = convert_from_usd(total_usd, display_currency)
-    anomalies = compute_anomalies(user_id)
-    forecast = predict_end_of_month(user_id)
-    rolling = get_rolling_30_context(user_id)
-    prompt = (
-        f"Summarize 30-day spending in {display_currency}. "
-        f"Total: {convert_from_usd(rolling['total_30d_usd'], display_currency):.2f}, "
-        f"Avg daily: {convert_from_usd(rolling['avg_daily_usd'], display_currency):.2f}, "
-        f"Top categories: {rolling['top_categories']}. "
-        f"Anomalies: {anomalies}. "
-        f"Forecast end-of-month spend (USD): {forecast['predicted_month_total_usd']:.2f}. "
-        f"Provide 3 actionable recommendations."
-    )
-    summary_text = ""
-    try:
-        resp = groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": "You are a concise financial analyst."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3,
-            max_tokens=250
-        )
-        summary_text = resp.choices[0].message.content
-    except Exception:
-        summary_text = "AI summary unavailable."
-    html = render_template(
-        'report_pdf.html',
-        date=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        currency=display_currency,
-        total_amount=f"{total_disp:.2f}",
-        count=len(data),
-        data=data,
-        executive_summary=summary_text
-    )
-    return html
-
-def _scheduled_monthly_audits():
-    while True:
-        try:
-            now = datetime.now()
-            if now.day == 1:
-                with app.app_context():
-                    conn = get_db_connection()
-                    users = conn.execute("SELECT id FROM users").fetchall()
-                    conn.close()
-                    ym = now.strftime('%Y%m')
-                    for u in users:
-                        uid = u['id']
-                        base_dir = os.path.join('static', 'reports', str(uid))
-                        os.makedirs(base_dir, exist_ok=True)
-                        file_path = os.path.join(base_dir, f"monthly_audit_{ym}.pdf")
-                        if not os.path.exists(file_path):
-                            html = _build_monthly_audit_html(uid, 'USD')
-                            with open(file_path, 'wb') as f:
-                                pisa.CreatePDF(src=html, dest=f)
-            time.sleep(3600)
-        except Exception:
-            time.sleep(3600)
-
-def _start_scheduler():
-    import threading
-    t = threading.Thread(target=_scheduled_monthly_audits, daemon=True)
-    t.start()
 
 # ================= NEW: SPLITWISE FEATURES =================
 
@@ -1963,12 +1189,6 @@ def group_detail(group_id):
     
     conn = get_db_connection()
     
-    group = conn.execute('SELECT * FROM groups WHERE id = ?', (group_id,)).fetchone()
-    if not group:
-        conn.close()
-        flash("Group not found.")
-        return redirect(url_for('groups'))
-
     # Access Control
     is_member = conn.execute('SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?',
                               (group_id, session['user_id'])).fetchone()
@@ -1976,6 +1196,8 @@ def group_detail(group_id):
         conn.close()
         flash("You are not a member of this group.")
         return redirect(url_for('groups'))
+    
+    group = conn.execute('SELECT * FROM groups WHERE id = ?', (group_id,)).fetchone()
     
     # Get Creator Username
     creator = conn.execute('SELECT username FROM users WHERE id = ?', (group['created_by'],)).fetchone()
@@ -2151,37 +1373,8 @@ def delete_group_expense(group_id, expense_id):
     
     flash('Expense deleted successfully!')
     return redirect(url_for('group_detail', group_id=group_id))
+# ================= CHATBOT =================
 
-@app.route('/activity_log')
-def activity_log():
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
-    
-    conn = get_db_connection()
-    user_id = session['user_id']
-    
-    # Fetch recent expenses and budgets to show as "activity"
-    # We decrypt the descriptions so they are readable
-    activities = conn.execute('''
-        SELECT 'Expense' as type, description, amount, currency, date, category 
-        FROM expenses WHERE user_id = ?
-        UNION ALL
-        SELECT 'Budget' as type, category as description, amount, currency, start_date as date, category
-        FROM budgets WHERE user_id = ?
-        ORDER BY date DESC LIMIT 50
-    ''', (user_id, user_id)).fetchall()
-    
-    conn.close()
-    
-    # Decrypt descriptions for the view
-    activity_list = []
-    for row in activities:
-        act = dict(row)
-        if act['type'] == 'Expense':
-            act['description'] = decrypt_data(act['description'])
-        activity_list.append(act)
-    
-    return render_template('activity_log.html', activities=activity_list)
 
 if __name__ == '__main__':
     init_db()
@@ -2191,5 +1384,4 @@ if __name__ == '__main__':
         _RATES_CACHE["timestamp"] = time.time()
     except Exception:
         pass
-    _start_scheduler()
     app.run(debug=True)
