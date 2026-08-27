@@ -6,16 +6,32 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Expense Tracker{% endblock %}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link href="https://cdn.jsdelivr.net/npm/tom-select/dist/css/tom-select.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/tom-select/dist/js/tom-select.complete.min.js"></script>
 </head>
 
 <body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+    <div class="app-backdrop" aria-hidden="true">
+        <img src="https://images.unsplash.com/photo-1497215842964-222b430dc094?auto=format&fit=crop&w=2400&q=82" alt="">
+        <video autoplay muted loop playsinline poster="https://images.unsplash.com/photo-1497215842964-222b430dc094?auto=format&fit=crop&w=1600&q=72">
+            <source src="https://cdn.coverr.co/videos/coverr-working-on-a-laptop-1575/1080p.mp4" type="video/mp4">
+        </video>
+        <div class="backdrop-light backdrop-violet"></div>
+        <div class="backdrop-light backdrop-cyan"></div>
+        <div class="backdrop-grid"></div>
+    </div>
+    <nav class="navbar navbar-expand-lg navbar-light app-nav">
         <div class="container">
-            <a class="navbar-brand" href="{{ url_for('dashboard') }}">Expense Tracker</a>
-            <div class="navbar-nav ms-auto">
+            <a class="navbar-brand brand-mark" href="{{ url_for('dashboard') }}"><span class="brand-dot"></span>Expense Tracker</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#main-nav" aria-controls="main-nav" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="main-nav">
+            <div class="navbar-nav ms-auto align-items-lg-center gap-lg-2">
                 {% if session.user_id %}
                     <a class="nav-link" href="{{ url_for('dashboard') }}">Dashboard</a>
                     <a class="nav-link" href="{{ url_for('expenses') }}">Expenses</a>
@@ -23,15 +39,18 @@
                     <a class="nav-link" href="{{ url_for('analytics') }}">Analytics</a>
                     <a class="nav-link" href="{{ url_for('groups') }}">Split-Wise</a>
                     <a class="nav-link" href="{{ url_for('logout') }}">Logout</a>
+                    <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark theme" aria-pressed="false"><span aria-hidden="true">☾</span><span class="theme-toggle-label">Dark</span></button>
                 {% else %}
                 <a class="nav-link" href="{{ url_for('login') }}">Login</a>
                 <a class="nav-link" href="{{ url_for('signup') }}">Sign Up</a>
+                <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark theme" aria-pressed="false"><span aria-hidden="true">☾</span><span class="theme-toggle-label">Dark</span></button>
                 {% endif %}
+            </div>
             </div>
         </div>
     </nav>
 
-    <div class="container mt-4">
+    <main class="container app-content mt-4">
         {% with messages = get_flashed_messages() %}
         {% if messages %}
         {% for message in messages %}
@@ -44,10 +63,31 @@
         {% endwith %}
 
         {% block content %}{% endblock %}
-    </div>
+    </main>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        (() => {
+            const toggle = document.getElementById('theme-toggle');
+            if (!toggle) return;
+            const savedTheme = localStorage.getItem('expense-theme') || 'light';
+            const setTheme = theme => {
+                document.body.dataset.theme = theme;
+                const dark = theme === 'dark';
+                toggle.setAttribute('aria-pressed', String(dark));
+                toggle.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
+                toggle.querySelector('span').textContent = dark ? '☀' : '☾';
+                toggle.querySelector('.theme-toggle-label').textContent = dark ? 'Light' : 'Dark';
+            };
+            setTheme(savedTheme);
+            toggle.addEventListener('click', () => {
+                const nextTheme = document.body.dataset.theme === 'dark' ? 'light' : 'dark';
+                localStorage.setItem('expense-theme', nextTheme);
+                setTheme(nextTheme);
+            });
+        })();
+    </script>
     {% block scripts %}{% endblock %}
 </body>
 

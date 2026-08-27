@@ -1,133 +1,137 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="row">
-    <div class="col-12">
-        <h2>Dashboard</h2>
+<section class="dashboard-hero row align-items-center g-4 mb-4 reveal">
+    <div class="hero-photo" aria-hidden="true">
+        <img src="https://images.unsplash.com/photo-1497215842964-222b430dc094?auto=format&fit=crop&w=2200&q=85" alt="" fetchpriority="high">
+        <video autoplay muted loop playsinline poster="https://images.unsplash.com/photo-1497215842964-222b430dc094?auto=format&fit=crop&w=1600&q=75">
+            <source src="https://cdn.coverr.co/videos/coverr-working-on-a-laptop-1575/1080p.mp4" type="video/mp4">
+        </video>
+    </div>
+    <div class="hero-photo-shade" aria-hidden="true"></div>
+    <div class="col-lg-4 dashboard-copy">
+        <div class="app-eyebrow mb-2">Financial overview</div>
+        <h1 class="dashboard-title display-5 mb-1"><span class="heading-greeting">Good evening,</span><br><strong>{{ session.username }}</strong></h1>
+        <span class="heading-rule" aria-hidden="true"></span>
+        <p class="text-muted mb-0">Here's what's happening with your finances today.</p>
+        <div class="card balance-card mt-4">
+            <div class="metric-label">Total recorded spending</div>
+            <div class="balance-value">{{ currency }} {{ "%.2f"|format(total_expenses) }}</div>
+            <div class="balance-meta"><span>Current month</span><strong>{{ currency }} {{ "%.2f"|format(monthly_expenses) }}</strong></div>
+        </div>
+    </div>
+    <div class="col-lg-4 hero-visual-wrap" data-hero-depth="1">
+        <div class="hero-glow"></div>
+        <canvas id="finance-scene" class="finance-scene" aria-label="Interactive 3D financial wallet illustration"></canvas>
+        <img class="hero-visual hero-fallback" src="{{ url_for('static', filename='assets/finance-wallet.svg') }}" alt="Digital wallet financial illustration">
+        <span class="float-chip chip-one" data-hero-depth="1.5">● Live tracking</span>
+        <span class="float-chip chip-two" data-hero-depth=".7">✓ Data in sync</span>
+    </div>
+    <div class="col-lg-4 hero-actions d-flex flex-column gap-2">
+        <div class="reference-panel-heading"><span>Quick actions</span><span aria-hidden="true">•••</span></div>
+        <a class="reference-action action-food" href="{{ url_for('add_expense') }}"><span class="action-icon">＋</span><span>Add expense</span></a>
+        <a class="reference-action action-budget" href="{{ url_for('budgets') }}"><span class="action-icon">◎</span><span>Review budgets</span></a>
+        <a class="reference-action action-analytics" href="{{ url_for('analytics') }}"><span class="action-icon">↗</span><span>Explore analytics</span></a>
+        <div class="hero-actions-controls d-flex flex-wrap gap-2 mt-auto">
         <form method="post" action="{{ url_for('set_currency') }}">
             {% set label_text = "Select Your Desired Currency (Everything will be converted to this)" %}
             {% set auto_submit = true %}
             {% include "partials/common_input.html" %}
         </form>
-      
-        <p>Welcome back, {{ session.username }}!</p>
+        </div>
     </div>
-</div>
+</section>
 
-<div class="row mt-4">
-    <div class="col-md-3">
-        <div class="card text-white bg-primary mb-3">
-            <div class="card-body">
-                <h5 class="card-title">Total Expenses</h5>
-                <h2 class="card-text">{{ currency }} {{ "%.2f"|format(total_expenses) }}</h2>
-            </div>
-        </div>
+<section class="life-strip reveal reveal-delay-1 mb-4" aria-labelledby="life-strip-title">
+    <div class="d-flex justify-content-between align-items-end mb-3">
+        <div><div class="app-eyebrow">Life behind the numbers</div><h2 id="life-strip-title" class="h4 mb-0 mt-1">Everyday spending, clearly seen.</h2></div>
+        <span class="text-muted small d-none d-sm-inline">Real-world context for your habits</span>
     </div>
-    <div class="col-md-3">
-        <div class="card text-white bg-info mb-3">
-            <div class="card-body">
-                <h5 class="card-title">This Month</h5>
-                <h2 class="card-text">{{ currency }} {{ "%.2f"|format(monthly_expenses) }}</h2>
-            </div>
-        </div>
+    <div class="life-grid">
+        <article class="life-scene life-scene-large" data-depth=".12">
+            <img src="https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&w=1200&q=82" alt="Person paying with a card at a cafe" loading="eager">
+            <div class="life-overlay"></div><div class="life-caption"><span class="life-dot life-orange"></span><span>Daily choices</span><strong>Food & coffee</strong></div>
+        </article>
+        <article class="life-scene" data-depth=".18">
+            <img src="https://images.unsplash.com/photo-1521334884684-d80222895322?auto=format&fit=crop&w=900&q=82" alt="Clothing and lifestyle shopping" loading="lazy">
+            <div class="life-overlay"></div><div class="life-caption"><span class="life-dot life-burgundy"></span><span>Category pulse</span><strong>Shopping</strong></div>
+        </article>
+        <article class="life-scene life-video-scene" data-depth=".08">
+            <video autoplay muted loop playsinline poster="https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=900&q=78" aria-label="Person using a phone for digital finance">
+                <source src="https://cdn.coverr.co/videos/coverr-a-woman-using-a-smartphone-1572/1080p.mp4" type="video/mp4">
+            </video>
+            <div class="life-overlay"></div><div class="life-caption"><span class="life-dot life-cyan"></span><span>Always in reach</span><strong>Digital payments</strong></div>
+        </article>
     </div>
+</section>
+
+<section class="row g-3 mb-4 reveal reveal-delay-1">
+    <div class="col-md-6 col-xl-3"><div class="card metric-card metric-accent h-100">
+        <div class="metric-label">Total expenses</div>
+        <div class="metric-value mt-3">{{ currency }} {{ "%.2f"|format(total_expenses) }}</div>
+        <div class="text-muted small mt-2">All recorded spending</div>
+    </div></div>
+    <div class="col-md-6 col-xl-3"><div class="card metric-card metric-green h-100">
+        <div class="metric-label">This month</div>
+        <div class="metric-value mt-3">{{ currency }} {{ "%.2f"|format(monthly_expenses) }}</div>
+        <div class="text-muted small mt-2">Current monthly activity</div>
+    </div></div>
     {% if total_budget > 0 %}
-    <div class="col-md-3">
-        <div class="card text-white bg-success mb-3">
-            <div class="card-body">
-                <h5 class="card-title">Total Budget</h5>
-                <h2 class="card-text">{{ currency }} {{ "%.2f"|format(total_budget) }}</h2>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card text-white {% if total_budget_spent > total_budget %}bg-danger{% elif total_budget_spent > total_budget * 0.8 %}bg-warning{% else %}bg-success{% endif %} mb-3">
-            <div class="card-body">
-                <h5 class="card-title">Budget Spent</h5>
-                <h2 class="card-text">{{ currency }} {{ "%.2f"|format(total_budget_spent) }}</h2>
-                <small>{{ "%.1f"|format((total_budget_spent / total_budget * 100) if total_budget > 0 else 0) }}% used</small>
-            </div>
-        </div>
-    </div>
+    <div class="col-md-6 col-xl-3"><div class="card metric-card metric-green h-100">
+        <div class="metric-label">Total budget</div>
+        <div class="metric-value mt-3">{{ currency }} {{ "%.2f"|format(total_budget) }}</div>
+        <div class="text-muted small mt-2">Your planned spending</div>
+    </div></div>
+    <div class="col-md-6 col-xl-3"><div class="card metric-card metric-yellow h-100">
+        <div class="metric-label">Budget used</div>
+        <div class="metric-value mt-3">{{ currency }} {{ "%.2f"|format(total_budget_spent) }}</div>
+        <div class="text-muted small mt-2">{{ "%.1f"|format((total_budget_spent / total_budget * 100) if total_budget > 0 else 0) }}% used</div>
+    </div></div>
     {% endif %}
-</div>
+</section>
 
-{% if budget_alerts %}
-<div class="row mt-4">
-    <div class="col-12">
-        <div class="card border-warning">
-            <div class="card-header bg-warning text-dark">
-                <h5 class="mb-0">⚠️ Budget Alerts</h5>
+<section class="row g-4 reveal reveal-delay-2">
+    <div class="col-xl-8">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div><div class="app-eyebrow">Activity</div><h2 class="h5 mb-0 mt-1">Recent expenses</h2></div>
+                <a href="{{ url_for('expenses') }}" class="btn btn-sm btn-outline-light">View all</a>
             </div>
             <div class="card-body">
-                {% for alert in budget_alerts %}
-                <div class="alert alert-{% if alert.status == 'exceeded' %}danger{% else %}warning{% endif %} mb-2" role="alert">
-                    <strong>{{ alert.category }}:</strong> 
-                    {% if alert.status == 'exceeded' %}
-                    Budget exceeded by {{ currency }} {{ "%.2f"|format(-alert.remaining) }}  ({{ "%.1f"|format(alert.percentage) }}% used)
-                    {% else %}
-                        {{ "%.1f"|format(alert.percentage) }}% of budget used. {{ currency }} {{ "%.2f"|format(alert.remaining) }} remaining.
-                    {% endif %}
-                </div>
-                {% endfor %}
-                <a href="{{ url_for('budgets') }}" class="btn btn-sm btn-outline-primary">Manage Budgets</a>
+                {% if recent_expenses %}<div class="table-responsive"><table class="table align-middle mb-0">
+                    <thead><tr><th>Date</th><th>Category</th><th>Description</th><th class="text-end">Amount</th></tr></thead>
+                    <tbody>{% for expense in recent_expenses %}<tr>
+                        <td class="text-muted small">{{ expense['date'] }}</td><td>{{ expense['category'] }}</td>
+                        <td class="text-muted">{{ expense['description'] or '-' }}</td><td class="text-end">{{ currency }} {{ "%.2f"|format(expense['amount_display']) }}</td>
+                    </tr>{% endfor %}</tbody>
+                </table></div>{% else %}<div class="empty-state py-4 text-center"><p class="mb-2">No expenses yet.</p><a href="{{ url_for('add_expense') }}" class="btn btn-sm btn-primary">Record your first expense</a></div>{% endif %}
             </div>
         </div>
     </div>
-</div>
-{% endif %}
-
-<div class="row mt-4">
-    <div class="col-12">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Recent Expenses</h5>
-            </div>
-            <div class="card-body">
-                {% if recent_expenses %}
-                <div class="table-responsive">
-                    <table class="table table-striped">
-                        <thead>
-                            <tr>
-                                <th>Date</th>
-                                <th>Category</th>
-                                <th>Description</th>
-                                <th>Amount</th>
-                                <th>In your currency</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for expense in recent_expenses %}
-                            <tr>
-                                <td>{{ expense['date'] }}</td>
-                                <td>{{ expense['category'] }}</td>
-                                <td>{{ expense['description'] or '-' }}</td>
-                                <td>{{ expense['currency'] }} {{ "%.2f"|format(expense['amount']) }}</td>
-                                <td>{{ currency }} {{ "%.2f"|format(expense['amount_display']) }}</td>
-
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                {% else %}
-                <p class="text-muted">No expenses recorded yet.</p>
-                {% endif %}
-            </div>
+    <div class="col-xl-4"><div class="card h-100">
+        <div class="card-header"><div class="app-eyebrow">Shortcuts</div><h2 class="h5 mb-0 mt-1">Move faster</h2></div>
+        <div class="card-body d-grid gap-2">
+            <a class="btn quick-action text-start" href="{{ url_for('add_expense') }}">＋ Record expense</a>
+            <a class="btn quick-action text-start" href="{{ url_for('budgets') }}">◎ Review budgets</a>
+            <a class="btn quick-action text-start" href="{{ url_for('analytics') }}">↗ Explore analytics</a>
+            <a class="btn quick-action text-start" href="{{ url_for('groups') }}">◌ Shared expenses</a>
         </div>
-    </div>
-</div>
+    </div></div>
+</section>
 
-<!-- ================= AI CHATBOT ================= -->
-<div class="row mt-5">
-    <div class="col-12 col-lg-8 mx-auto">
-        <div class="card shadow-sm">
-            <div class="card-header bg-dark text-white">
-                <h5 class="mb-0">🤖 AI Finance Assistant</h5>
-                <small class="text-muted">Ask about your expenses, budgets & savings</small>
+{% if budget_alerts %}<section class="card border-warning mt-4">
+    <div class="card-body"><div class="app-eyebrow">Attention needed</div>
+        {% for alert in budget_alerts %}<div class="d-flex justify-content-between flex-wrap gap-2 mt-2"><span><strong>{{ alert.category }}</strong> is {{ "%.1f"|format(alert.percentage) }}% used</span><a href="{{ url_for('budgets') }}" class="text-warning">Review budget</a></div>{% endfor %}
+    </div>
+</section>{% endif %}
+
+<!-- AI assistant -->
+<section class="row mt-4">
+    <div class="col-12 col-lg-8 mx-auto"><div class="card">
+            <div class="card-header"><div class="app-eyebrow">Assistant</div><h2 class="h5 mb-0 mt-1">AI Finance Assistant</h2><small class="text-muted">Ask about your expenses and budgets</small>
             </div>
 
-            <div class="card-body" style="height: 320px; overflow-y: auto;" id="chat-messages">
+            <div class="card-body chat-messages" id="chat-messages" aria-live="polite">
                 <div class="text-muted">
                     👋 Hi {{ session.username }}!  
                     Ask things like:
@@ -141,14 +145,8 @@
 
             <div class="card-footer">
                 <div class="input-group">
-                    <input
-                        type="text"
-                        id="chat-input"
-                        class="form-control"
-                        placeholder="Ask a question about your expenses..."
-                        onkeypress="if(event.key==='Enter') sendMessage()"
-                    >
-                    <button class="btn btn-primary" onclick="sendMessage()">Send</button>
+                    <input type="text" id="chat-input" class="form-control" placeholder="Ask a question about your expenses...">
+                    <button class="btn btn-primary" id="chat-send" type="button">Send</button>
                 </div>
             </div>
         </div>
@@ -164,11 +162,10 @@ async function sendMessage() {
     const chatBox = document.getElementById("chat-messages");
 
     // User message
-    chatBox.innerHTML += `
-        <div class="mb-2">
-            <strong>You:</strong> ${message}
-        </div>
-    `;
+    const userLine = document.createElement('div');
+    userLine.className = 'mb-2';
+    userLine.textContent = `You: ${message}`;
+    chatBox.appendChild(userLine);
 
     chatBox.scrollTop = chatBox.scrollHeight;
     input.value = "";
@@ -184,20 +181,82 @@ async function sendMessage() {
 
         const data = await response.json();
 
-        chatBox.innerHTML += `
-            <div class="mb-3 text-primary">
-                <strong>AI:</strong> ${data.reply}
-            </div>
-        `;
+        const aiLine = document.createElement('div');
+        aiLine.className = 'mb-3 text-primary';
+        aiLine.textContent = `AI: ${data.reply}`;
+        chatBox.appendChild(aiLine);
         chatBox.scrollTop = chatBox.scrollHeight;
 
     } catch (error) {
-        chatBox.innerHTML += `
-            <div class="text-danger">
-                <strong>AI:</strong> Something went wrong. Please try again.
-            </div>
-        `;
+        const errorLine = document.createElement('div');
+        errorLine.className = 'text-danger';
+        errorLine.textContent = 'AI: Something went wrong. Please try again.';
+        chatBox.appendChild(errorLine);
     }
 }
+document.getElementById('chat-send').addEventListener('click', sendMessage);
+document.getElementById('chat-input').addEventListener('keydown', event => { if (event.key === 'Enter') sendMessage(); });
+</script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.min.js"></script>
+<script>
+(() => {
+    const canvas = document.getElementById('finance-scene');
+    const fallback = document.querySelector('.hero-fallback');
+    if (!canvas || !window.THREE || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 100);
+    camera.position.set(0, 0.1, 6.5);
+    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.7));
+    renderer.setClearColor(0x000000, 0);
+
+    scene.add(new THREE.AmbientLight(0xb8c7ff, 1.8));
+    const violetLight = new THREE.PointLight(0x8b5cf6, 18, 8); violetLight.position.set(3, 2, 3); scene.add(violetLight);
+    const cyanLight = new THREE.PointLight(0x7dd3fc, 12, 7); cyanLight.position.set(-3, -1, 2); scene.add(cyanLight);
+    const greenLight = new THREE.PointLight(0x86d993, 9, 5); greenLight.position.set(0, -2, 2); scene.add(greenLight);
+
+    const wallet = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(3.5, 2.15, .24), new THREE.MeshStandardMaterial({ color: 0x171b24, metalness: .72, roughness: .24 }));
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(3.48, .3, .27), new THREE.MeshStandardMaterial({ color: 0x8b5cf6, emissive: 0x25104f, emissiveIntensity: 1.2, metalness: .45, roughness: .24 }));
+    stripe.position.y = .32;
+    const chip = new THREE.Mesh(new THREE.BoxGeometry(.48, .38, .29), new THREE.MeshStandardMaterial({ color: 0xffd166, emissive: 0x9a6f00, emissiveIntensity: .3, metalness: .7, roughness: .2 }));
+    chip.position.set(-1.25, -.45, .05);
+    wallet.add(body, stripe, chip); wallet.rotation.set(.22, -.35, -.08); scene.add(wallet);
+
+    const coinMaterial = new THREE.MeshStandardMaterial({ color: 0xffd166, emissive: 0x9a6f00, emissiveIntensity: .35, metalness: .85, roughness: .2 });
+    for (let index = 0; index < 4; index += 1) {
+        const coin = new THREE.Mesh(new THREE.CylinderGeometry(.27, .27, .08, 32), coinMaterial);
+        coin.position.set(-1.5 + index * .35, -1.35 + Math.abs(index - 1.5) * .08, .15 + index * .04);
+        coin.rotation.x = Math.PI / 2; scene.add(coin);
+    }
+
+    const pointer = { x: 0, y: 0 };
+    const resize = () => { const rect = canvas.getBoundingClientRect(); renderer.setSize(rect.width, rect.height, false); camera.aspect = rect.width / rect.height; camera.updateProjectionMatrix(); };
+    const move = event => { pointer.x = (event.clientX / window.innerWidth - .5) * .18; pointer.y = (event.clientY / window.innerHeight - .5) * .12; };
+    window.addEventListener('resize', resize); window.addEventListener('mousemove', move, { passive: true }); resize();
+    if (fallback) fallback.style.display = 'none';
+    const animate = time => { wallet.rotation.y += (pointer.x - wallet.rotation.y + .35) * .018; wallet.rotation.x += (pointer.y + .22 - wallet.rotation.x) * .018; wallet.position.y = Math.sin(time * .001) * .08; renderer.render(scene, camera); requestAnimationFrame(animate); };
+    requestAnimationFrame(animate);
+})();
+</script>
+<script>
+(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !window.matchMedia('(pointer: fine)').matches) return;
+    const scenes = [...document.querySelectorAll('.life-scene[data-depth]')];
+    const hero = document.querySelector('.dashboard-hero');
+    const heroMedia = document.querySelector('.hero-photo img, .hero-photo video');
+    let frame;
+    window.addEventListener('mousemove', event => {
+        cancelAnimationFrame(frame);
+        frame = requestAnimationFrame(() => {
+            const x = (event.clientX / window.innerWidth - .5) * 10;
+            const y = (event.clientY / window.innerHeight - .5) * 8;
+            scenes.forEach(scene => { scene.style.setProperty('--parallax-x', `${x * Number(scene.dataset.depth)}px`); scene.style.setProperty('--parallax-y', `${y * Number(scene.dataset.depth)}px`); });
+            if (heroMedia) { heroMedia.style.setProperty('--hero-x', `${x * .7}px`); heroMedia.style.setProperty('--hero-y', `${y * .7}px`); }
+            if (hero) { hero.style.setProperty('--tilt-x', `${y * -.08}deg`); hero.style.setProperty('--tilt-y', `${x * .08}deg`); }
+        });
+    }, { passive: true });
+})();
 </script>
 {% endblock %}

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 400" role="img" aria-labelledby="title desc">
+  <title id="title">Digital wallet illustration</title>
+  <desc id="desc">A dark digital wallet with a green financial signal</desc>
+  <defs>
+    <linearGradient id="wallet" x1="0" x2="1" y1="0" y2="1">
+      <stop stop-color="#252a34"/><stop offset="1" stop-color="#111419"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" x2="1">
+      <stop stop-color="#8b5cf6"/><stop offset="1" stop-color="#6366f1"/>
+    </linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="12" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <circle cx="280" cy="180" r="130" fill="#8b5cf6" opacity=".14" filter="url(#glow)"/>
+  <path d="M112 130 365 74c25-6 49 10 55 35l42 190c5 25-11 49-36 55l-253 56c-25 5-49-11-55-36L76 185c-5-25 11-49 36-55Z" fill="url(#wallet)" stroke="#ffffff" stroke-opacity=".18" stroke-width="2"/>
+  <path d="m82 183 285-63c24-5 48 10 54 34l8 38-300 66c-26 6-51-11-57-37Z" fill="url(#shine)" opacity=".9"/>
+  <path d="m171 258 231-51c18-4 36 7 40 25l10 44c4 18-7 36-25 40l-231 51c-18 4-36-7-40-25l-10-44c-4-18 7-36 25-40Z" fill="#191d23" stroke="#ffffff" stroke-opacity=".12" stroke-width="2"/>
+  <circle cx="364" cy="284" r="19" fill="#34d399"/><circle cx="389" cy="279" r="19" fill="#34d399" opacity=".45"/>
+  <path d="m177 321 32-7 7 29-32 7Z" fill="#f5f7fa" opacity=".72"/>
+  <path d="m137 113 170-37" stroke="#34d399" stroke-width="5" stroke-linecap="round" opacity=".8"/>
+  <path d="m326 54 15 18-23 3" fill="none" stroke="#34d399" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

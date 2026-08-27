@@ -16,7 +16,12 @@ from groq import Groq
 
 # --- CONFIGURATION ---
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-here'  # Change to random key
+app.secret_key = os.environ.get('SECRET_KEY') or os.urandom(32)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SECURE=os.environ.get('FLASK_ENV') == 'production'
+)
 
 _RATES_CACHE = {
     "timestamp": 0,
@@ -24,15 +29,16 @@ _RATES_CACHE = {
 }
 CACHE_TTL = 60 * 60  # 1 hour
 
-# Initialize Groq Client (Ensure API Key is set)
-# Ideally, use os.environ.get("GROQ_API_KEY")
-groq_client = Groq(
-    api_key="YOUR_GROQ_API_KEY_HERE" 
-)
+# The chatbot remains available when configured, but does not block app startup
+# when an AI key has not been provided.
+groq_api_key = os.environ.get('GROQ_API_KEY')
+groq_client = Groq(api_key=groq_api_key) if groq_api_key else None
 
 # --- DATABASE HELPERS ---
+DB_PATH = os.environ.get('DATABASE_PATH', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'expenses.db'))
+
 def get_db_connection():
-    conn = sqlite3.connect('expenses.db')
+    conn = sqlite3.connect(DB_PATH, uri=DB_PATH.startswith('file:'))
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -145,6 +151,49 @@ def init_db():
     
     conn.commit()
     conn.close()
+
+def get_user_categories(user_id):
+    """Return the user's categories, falling back to the built-in set."""
+    conn = get_db_connection()
+    categories = conn.execute('''
+        SELECT c.id, c.name, c.icon, c.color,
+               COUNT(e.id) AS expense_count
+        FROM categories c
+        LEFT JOIN expenses e ON e.user_id = c.user_id AND e.category = c.name
+        WHERE c.user_id = ?
+        GROUP BY c.id
+        ORDER BY c.name
+    ''', (user_id,)).fetchall()
+    conn.close()
+
+    if categories:
+        return categories
+
+    default_categories = [
+        ('Food', '[F]', '#e76f51'),
+        ('Transport', '[T]', '#2a9d8f'),
+        ('Entertainment', '[E]', '#e9c46a'),
+        ('Bills', '[B]', '#264653'),
+        ('Healthcare', '[H]', '#8ab17d'),
+        ('Shopping', '[S]', '#f4a261'),
+        ('Other', '[O]', '#6c757d'),
+    ]
+    return [
+        {'id': None, 'name': name, 'icon': icon, 'color': color, 'expense_count': 0}
+        for name, icon, color in default_categories
+    ]
+
+def get_category_by_id(category_id, user_id):
+    conn = get_db_connection()
+    category = conn.execute('''
+        SELECT c.id, c.name, c.icon, c.color, COUNT(e.id) AS expense_count
+        FROM categories c
+        LEFT JOIN expenses e ON e.user_id = c.user_id AND e.category = c.name
+        WHERE c.id = ? AND c.user_id = ?
+        GROUP BY c.id
+    ''', (category_id, user_id)).fetchone()
+    conn.close()
+    return category
 
 # --- CURRENCY HELPERS ---
 def _fetch_usd_rates():
@@ -263,6 +312,10 @@ def calculate_group_debts(group_id):
     return transactions
 
 # --- ROUTES ---
+
+@app.route('/health')
+def health():
+    return jsonify({'status': 'ok'}), 200
 
 @app.route('/set_currency', methods=['POST'])
 def set_currency():
@@ -634,7 +687,7 @@ def search_expenses():
     conn.close()
     
     # Categories for the filter dropdown
-    categories = ['Food', 'Transportation', 'Entertainment', 'Shopping', 'Bills', 'Healthcare', 'Other']
+    user_categories = get_user_categories(session['user_id'])
     
     # Pass filter values back for form persistence
     filters = {
@@ -1127,6 +1180,9 @@ def chatbot():
     Rules: Do not invent data. Answer clearly.
     """
 
+    if groq_client is None:
+        return {"reply": "AI assistant is not configured. Add GROQ_API_KEY to enable it."}, 503
+
     try:
         response = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
@@ -1376,12 +1432,17 @@ def delete_group_expense(group_id, expense_id):
 # ================= CHATBOT =================
 
 
+init_db()
+
 if __name__ == '__main__':
-    init_db()
     # Pre-fetch rates
     try:
         _RATES_CACHE["rates"] = _fetch_usd_rates()
         _RATES_CACHE["timestamp"] = time.time()
     except Exception:
         pass
-    app.run(debug=True)
+    app.run(
+        host='0.0.0.0',
+        port=int(os.environ.get('PORT', 5000)),
+        debug=os.environ.get('FLASK_DEBUG', '').lower() == 'true'
+    )
